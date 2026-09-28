@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleExecutable</key><string>NotchBalls</string>
+  <key>CFBundleIdentifier</key><string>local.codex.NotchBallsPrototype</string>
+  <key>CFBundleName</key><string>Notch Balls Prototype</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.35</string>
+  <key>CFBundleVersion</key><string>35</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSRemindersFullAccessUsageDescription</key>
+  <string>在刘海胶囊中查看、新增和完成你的提醒事项。</string>
+  <key>NSRemindersUsageDescription</key>
+  <string>在刘海胶囊中查看、新增和完成你的提醒事项。</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>在刘海胶囊中查看和新建 Apple 备忘录。</string>
+</dict></plist>

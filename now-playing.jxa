@@ -1,0 +1,62 @@
+ObjC.import('Foundation');
+
+function unwrap(value) {
+    if (value === null || value === undefined) return null;
+    try { if (value.isNil()) return null; } catch (_) {}
+    try { return ObjC.unwrap(value); } catch (_) { return null; }
+}
+
+function run(argv) {
+    var framework = $.NSBundle.bundleWithPath('/System/Library/PrivateFrameworks/MediaRemote.framework');
+    if (!framework || !framework.load) throw new Error('MediaRemote unavailable');
+    var Request = $.NSClassFromString('MRNowPlayingRequest');
+    var path = Request.localNowPlayingPlayerPath;
+    var client = path && path.client;
+    var bundle = client && (unwrap(client.parentApplicationBundleIdentifier) || unwrap(client.bundleIdentifier));
+    var item = Request.localNowPlayingItem;
+    var info = item && item.nowPlayingInfo;
+    function field(key) { return info ? unwrap(info.objectForKey(key)) : null; }
+    var title = field('kMRMediaRemoteNowPlayingInfoTitle');
+    if (!title) return JSON.stringify({available: false});
+    if (argv.length && argv[0] === 'artwork') {
+        ObjC.bindFunction('objc_msgSend', ['void', ['id', 'selector', 'id', 'id']]);
+        var request = Request.alloc.initWithPlayerPath(path);
+        var selector = $.NSSelectorFromString('requestNowPlayingItemArtworkWithCompletion:');
+        var completed = false;
+        var image = null;
+        var callback = ObjC.block(['void', ['id', 'id']], function(artwork, error) {
+            completed = true;
+            try {
+                if (artwork && !artwork.isNil()) {
+                    image = unwrap(artwork.imageData.base64EncodedStringWithOptions(0));
+                }
+            } catch (_) {}
+        });
+        var holder = $.NSPredicate.predicateWithBlock(callback);
+        $.objc_msgSend(request, selector, holder.valueForKey('block'), null);
+        var deadline = $.NSDate.dateWithTimeIntervalSinceNow(1.5);
+        while (!completed && Number(deadline.timeIntervalSinceNow) > 0) {
+            $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.02));
+        }
+        return JSON.stringify({available: true, title: title, artist: field('kMRMediaRemoteNowPlayingInfoArtist'), artworkData: image});
+    }
+    var commands = {toggle: 2, next: 4, previous: 5};
+    if (argv.length && Object.prototype.hasOwnProperty.call(commands, argv[0])) {
+        var Controller = $.NSClassFromString('MRNowPlayingController');
+        Controller.localRouteController.sendCommandOptionsCompletion(
+            commands[argv[0]], $.NSDictionary.dictionary, null);
+        return JSON.stringify({available: true, sent: true});
+    }
+    var position = null;
+    try { position = Number(item.metadata.calculatedPlaybackPosition); } catch (_) {}
+    return JSON.stringify({
+        available: true,
+        bundle: bundle,
+        title: title,
+        artist: field('kMRMediaRemoteNowPlayingInfoArtist'),
+        album: field('kMRMediaRemoteNowPlayingInfoAlbum'),
+        duration: field('kMRMediaRemoteNowPlayingInfoDuration'),
+        elapsed: isFinite(position) && position >= 0 ? position : field('kMRMediaRemoteNowPlayingInfoElapsedTime'),
+        playing: Boolean(Request.localIsPlaying)
+    });
+}

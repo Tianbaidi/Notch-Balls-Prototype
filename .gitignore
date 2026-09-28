@@ -1,0 +1,9 @@
+.DS_Store
+Notch Balls Prototype.app/
+white-noise.wav
+deep-noise.wav
+*.zip
+.env
+.env.*
+*.key
+*.pem
