@@ -56,7 +56,7 @@ GitHub raw CDN 可能仍返回旧清单；等待缓存更新后重跑 verify-liv
 ```sh
 export CODE_SIGN_IDENTITY='Developer ID Application: Your Name (TEAMID)'
 export NOTARYTOOL_PROFILE='your-local-keychain-profile'
-python3 scripts/release.py prepare --version 0.37 --build 37 --mode stable --notes releases/0.37.md
+python3 scripts/release.py prepare --version 0.38 --build 38 --mode stable --notes releases/0.38.md
 ```
 
 stable 必须使用 Developer ID Application 签名（含 Hardened Runtime 和时间戳），

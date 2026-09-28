@@ -18,7 +18,7 @@ struct SceneConfig: Codable {
     let modules: [Module]
 
     static let fallback = SceneConfig(
-        ballDiameter: 16, spacing: 12, emergeDuration: 0.42,
+        ballDiameter: 22, spacing: 12, emergeDuration: 0.32,
         collapseDelay: 0.55, maxColumns: 7,
         modules: [
             Module(id: "reminders", title: "提醒事项", detail: "查看、新增和完成提醒事项"),
@@ -38,6 +38,7 @@ struct SceneConfig: Codable {
               config.ballDiameter >= 8, config.ballDiameter <= 48,
               config.spacing >= 0, config.spacing <= 80,
               config.emergeDuration > 0, config.emergeDuration <= 3,
+              config.collapseDelay.isFinite, (0.15...5).contains(config.collapseDelay),
               config.maxColumns > 0, config.maxColumns <= 12,
               config.modules.count <= 30 else { return .fallback }
         return SceneConfig(
@@ -257,17 +258,17 @@ private struct IridescentRim: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { timeline in
-            let time = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
+        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: reduceMotion || passive || ProcessInfo.processInfo.isLowPowerModeEnabled)) { timeline in
+            let time = reduceMotion || passive || ProcessInfo.processInfo.isLowPowerModeEnabled ? 0 : timeline.date.timeIntervalSinceReferenceDate
             let breathing = reduceMotion ? 1 : 0.94 + 0.06 * sin(time * 0.72)
             let spectrum = colorField(time: time)
             ZStack {
                 spectrum
-                    .mask(RoundedRectangle(cornerRadius: corner).strokeBorder(lineWidth: 7))
-                    .blur(radius: 3.5)
+                    .mask(RoundedRectangle(cornerRadius: corner).strokeBorder(lineWidth: 4))
+                    .blur(radius: 2)
                     .opacity(0.38)
                 spectrum
-                    .mask(RoundedRectangle(cornerRadius: corner).strokeBorder(lineWidth: 3.2))
+                    .mask(RoundedRectangle(cornerRadius: corner).strokeBorder(lineWidth: 2))
                     .blur(radius: 1.2)
                     .opacity(0.62)
                 spectrum
@@ -277,8 +278,8 @@ private struct IridescentRim: View {
                     .stroke(LinearGradient(colors: [.white.opacity(0.52), .white.opacity(0.12), .white.opacity(0.32)],
                                            startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.45)
             }
-            .mask(RoundedRectangle(cornerRadius: corner).strokeBorder(lineWidth: 11))
-            .opacity(breathing * (passive ? 0.72 : 1))
+            .mask(RoundedRectangle(cornerRadius: corner).strokeBorder(lineWidth: 7))
+            .opacity(breathing * (passive ? 0.48 : 0.76))
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -394,7 +395,11 @@ private struct GlassPill: View {
         interaction.isPinned(module.id)
     }
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    private var accent: Color { CapsuleTheme.accent(module.id) }
     private var clearPassThrough: Bool { locked && !interaction.controlsArmed }
+    private var detailAnimation: Animation? { reduceMotion ? nil : .easeOut(duration: 0.24) }
 
     var body: some View {
         let detailOpen = (module.id == "reminders" && store.reminderExpanded)
@@ -403,7 +408,9 @@ private struct GlassPill: View {
             || ((module.id == "pomodoro" || module.id == "timer") && pomodoro.expanded)
         let corner: CGFloat = detailOpen ? 22 : 18
         ZStack {
-            if #available(macOS 26.0, *) {
+            if reduceTransparency {
+                RoundedRectangle(cornerRadius: corner).fill(Color(nsColor: .windowBackgroundColor))
+            } else if #available(macOS 26.0, *) {
                 NativePillGlass(clearPassThrough: clearPassThrough, corner: corner)
                     .id(interaction.backdropRevision)
                     .allowsHitTesting(false)
@@ -414,8 +421,10 @@ private struct GlassPill: View {
                     RoundedRectangle(cornerRadius: corner).fill(.ultraThinMaterial)
                 }
             }
-            content.padding(.horizontal, 12)
-                .environment(\.colorScheme, clearPassThrough ? .dark : colorScheme)
+            content.padding(.horizontal, detailOpen ? 16 : 10)
+                .environment(\.colorScheme, clearPassThrough && !reduceTransparency ? .dark : colorScheme)
+                .tint(accent)
+                .accentColor(accent)
                 .shadow(color: .black.opacity(clearPassThrough ? 0.5 : 0), radius: 1.5, y: 0.5)
                 .clipShape(RoundedRectangle(cornerRadius: corner))
         }
@@ -430,10 +439,10 @@ private struct GlassPill: View {
         .contentShape(RoundedRectangle(cornerRadius: corner))
         .animation(.easeOut(duration: 0.22), value: clearPassThrough)
         .accessibilityValue(locked ? (clearPassThrough ? "已锁定，点击穿透" : "已锁定，可操作") : "可操作")
-        .animation(.easeOut(duration: 0.28), value: store.reminderExpanded)
-        .animation(.easeOut(duration: 0.28), value: systemApps.notesExpanded)
-        .animation(.easeOut(duration: 0.28), value: systemApps.musicExpanded)
-        .animation(.easeOut(duration: 0.28), value: pomodoro.expanded)
+        .animation(detailAnimation, value: store.reminderExpanded)
+        .animation(detailAnimation, value: systemApps.notesExpanded)
+        .animation(detailAnimation, value: systemApps.musicExpanded)
+        .animation(detailAnimation, value: pomodoro.expanded)
     }
 
     @ViewBuilder private var content: some View {
@@ -528,15 +537,31 @@ private struct GlassPill: View {
     }
 
     private var musicCompact: some View {
-        HStack(spacing: 6) {
-            musicArtwork(size: 26)
+        ViewThatFits(in: .horizontal) {
+            musicCompactFull.frame(minWidth: 420)
+            HStack(spacing: 5) {
+                Button { systemApps.setExpanded("music", true) } label: {
+                    Text(systemApps.musicTitle).font(.system(size: 11, weight: .medium))
+                        .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                }.buttonStyle(.plain)
+                iconButton(systemApps.musicPlaying ? "pause.fill" : "play.fill", label: systemApps.musicPlaying ? "暂停播放" : "播放") {
+                    systemApps.musicCommand("toggle")
+                }
+                iconButton("chevron.down") { systemApps.setExpanded("music", true) }
+            }
+        }
+    }
+
+    private var musicCompactFull: some View {
+        HStack(spacing: 5) {
+            musicArtwork(size: 28)
             Button { systemApps.setExpanded("music", true) } label: {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(systemApps.musicTitle)
                         .font(.system(size: 10, weight: .semibold)).lineLimit(1)
                     Text(systemApps.musicArtist)
                         .font(.system(size: 8)).foregroundStyle(.secondary).lineLimit(1)
-                }.frame(width: 82, alignment: .leading).contentShape(Rectangle())
+                }.frame(width: 88, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain)
             Rectangle().fill(.primary.opacity(0.13)).frame(width: 1, height: 18)
             Button { systemApps.setExpanded("music", true) } label: {
@@ -561,129 +586,112 @@ private struct GlassPill: View {
     }
 
     private var pomodoroDetail: some View {
-        VStack(spacing: 7) {
-            HStack {
-                Text("番茄钟").font(.system(size: 13, weight: .semibold))
-                Spacer()
-                iconButton(interaction.isPinned(module.id) ? "pin.fill" : "pin") { togglePin() }
-                iconButton("chevron.up") { pomodoro.setExpanded(false) }
-                if !pomodoro.isSessionActive { iconButton("xmark") { onClose() } }
-            }
-
-            if pomodoro.phase == .focus {
-                if let name = pomodoro.activeFocusName {
-                    Text(name).font(.system(size: 11, weight: .medium))
-                        .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    TextField("这次专注会话要做什么？", text: $pomodoro.focusDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11))
-                        .onSubmit { pomodoro.start() }
-                    if pomodoro.nameError {
-                        Text("请先为这次专注命名")
-                            .font(.system(size: 10)).foregroundStyle(.secondary)
+        ScrollView {
+            VStack(spacing: 14) {
+                detailHeader("番茄钟", subtitle: pomodoro.isSessionActive ? "一件事，专心做好" : "为下一段专注留出空间") {
+                    pomodoro.setExpanded(false)
+                }
+                HStack(spacing: 18) {
+                    ZStack {
+                        Circle().stroke(accent.opacity(0.12), lineWidth: 5)
+                        Circle().trim(from: 0, to: min(1, max(0, pomodoro.progress)))
+                            .stroke(accent.gradient, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                        VStack(spacing: 3) {
+                            Text(pomodoro.timeText)
+                                .font(.system(size: 24, weight: .medium, design: .rounded)).monospacedDigit()
+                                .contentTransition(.numericText(countsDown: true))
+                                .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: pomodoro.secondsRemaining)
+                            Text(pomodoro.phase.title).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                        }
+                    }.frame(width: 98, height: 98)
+                    VStack(alignment: .leading, spacing: 9) {
+                        if let name = pomodoro.activeFocusName {
+                            Text(name).font(.system(size: 14, weight: .semibold)).lineLimit(2)
+                            Label(pomodoro.isRunning ? "正在专注" : "已暂停", systemImage: pomodoro.isRunning ? "smallcircle.filled.circle" : "pause.circle")
+                                .font(.system(size: 11)).foregroundStyle(accent)
+                        } else {
+                            TextField("这次专注做什么？", text: $pomodoro.focusDraft)
+                                .textFieldStyle(.plain).font(.system(size: 12))
+                                .padding(10).background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
+                                .onSubmit { pomodoro.start() }
+                            Text(pomodoro.nameError ? "先写下一个小目标，再开始" : "输入目标，按回车开始")
+                                .font(.system(size: 10)).foregroundStyle(pomodoro.nameError ? accent : .secondary)
+                        }
+                        Button { pomodoro.toggleRunning() } label: {
+                            Label(pomodoro.isRunning ? "暂停" : pomodoro.isSessionActive ? "继续" : "开始专注",
+                                  systemImage: pomodoro.isRunning ? "pause.fill" : "play.fill")
+                                .font(.system(size: 11, weight: .semibold)).frame(maxWidth: .infinity).frame(height: 32)
+                        }.buttonStyle(CapsuleButtonStyle(prominent: true))
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.padding(12).background(accent.opacity(0.055), in: RoundedRectangle(cornerRadius: 16))
+                HStack(spacing: 8) {
+                    labeledButton("跳过阶段", symbol: "forward.end") { pomodoro.skipPhase() }
+                    labeledButton("重置计时", symbol: "arrow.counterclockwise") { pomodoro.resetCurrent() }
+                    if pomodoro.isSessionActive {
+                        labeledButton("结束并记录", symbol: "stop.fill") {
+                            pomodoro.endSession(); interaction.setPinned(module.id, false); onClose()
+                        }
                     }
                 }
-            }
-
-            ZStack {
-                Circle().stroke(.primary.opacity(0.14), lineWidth: 4)
-                Circle().trim(from: 0, to: pomodoro.progress)
-                    .stroke(.primary.opacity(0.72),
-                            style: StrokeStyle(lineWidth: 4, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                VStack(spacing: 2) {
-                    Text(pomodoro.timeText)
-                        .font(.system(size: 21, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                    Text(pomodoro.phase.title)
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                }
-            }
-            .frame(width: 76, height: 76)
-
-            HStack(spacing: 14) {
-                labeledButton(pomodoro.isRunning ? "暂停" : "开始",
-                              symbol: pomodoro.isRunning ? "pause.fill" : "play.fill") {
-                    pomodoro.toggleRunning()
-                }
-                labeledButton("跳过", symbol: "forward.end") { pomodoro.skipPhase() }
-                labeledButton("重置", symbol: "arrow.counterclockwise") {
-                    pomodoro.resetCurrent()
-                }
-                if pomodoro.isSessionActive {
-                    labeledButton("结束并记录", symbol: "stop.fill") {
-                        pomodoro.endSession()
-                        interaction.setPinned(module.id, false)
-                        onClose()
+                VStack(spacing: 8) {
+                    HStack {
+                        Label("环境声", systemImage: "waveform").font(.system(size: 12, weight: .semibold))
+                        Spacer()
+                        Button(pomodoro.ambientOn ? "停止播放" : "播放混音") { pomodoro.toggleAmbient() }
+                            .font(.system(size: 10, weight: .medium)).buttonStyle(.plain).foregroundStyle(accent)
                     }
-                }
-            }
-            Divider()
-            HStack(spacing: 7) {
-                Image(systemName: "waveform").font(.system(size: 11))
-                Text("环境声混音").font(.system(size: 11, weight: .medium))
-                Spacer()
-                Button(pomodoro.ambientOn ? "关闭" : "播放") {
-                    pomodoro.toggleAmbient()
-                }.buttonStyle(.plain).font(.system(size: 11, weight: .medium))
-            }
-            HStack(spacing: 4) {
-                Text("底噪").font(.system(size: 10)).foregroundStyle(.secondary)
-                Spacer()
-                ForEach(AmbientBase.allCases, id: \.self) { base in
-                    Button(base.title) { pomodoro.setAmbientBase(base) }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 9, weight: .medium))
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(pomodoro.ambientSettings.base == base
-                                    ? Color.primary.opacity(0.15) : .clear, in: Capsule())
-                        .overlay(Capsule().strokeBorder(.primary.opacity(0.12), lineWidth: 0.6))
-                }
-            }
-            ForEach(AmbientLayer.allCases, id: \.self) { layer in
-                NeutralLevelSlider(
-                    title: layer.title, symbol: layer.symbol,
-                    value: Binding(
-                        get: { pomodoro.ambientSettings.volume(for: layer) },
-                        set: { pomodoro.setAmbientVolume(layer, $0) }
-                    ),
-                    enabled: layer != .base || pomodoro.ambientSettings.base != .off
-                )
-            }
-            if let error = pomodoro.soundError {
-                Text(error).font(.system(size: 9)).foregroundStyle(.secondary)
-            }
-            if pomodoro.isSessionActive {
-                Button("结束番茄钟") { pomodoro.endSession() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-        }
-        .padding(.vertical, 8)
+                    HStack(spacing: 6) {
+                        Text("底噪").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Spacer()
+                        ForEach(AmbientBase.allCases, id: \.self) { base in
+                            Button(base.title) { pomodoro.setAmbientBase(base) }
+                                .font(.system(size: 10, weight: .medium)).padding(.horizontal, 10).padding(.vertical, 5)
+                                .background(pomodoro.ambientSettings.base == base ? accent.opacity(0.16) : .clear, in: Capsule())
+                                .buttonStyle(.plain)
+                                .accessibilityAddTraits(pomodoro.ambientSettings.base == base ? .isSelected : [])
+                        }
+                    }
+                    ForEach(AmbientLayer.allCases, id: \.self) { layer in
+                        NeutralLevelSlider(title: layer.title, symbol: layer.symbol,
+                            value: Binding(get: { pomodoro.ambientSettings.volume(for: layer) },
+                                           set: { pomodoro.setAmbientVolume(layer, $0) }),
+                            enabled: layer != .base || pomodoro.ambientSettings.base != .off)
+                    }
+                    if let error = pomodoro.soundError {
+                        Text(error).font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                }.padding(12).background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 14))
+            }.padding(.vertical, 14)
+        }.scrollIndicators(.hidden)
     }
 
-    private func labeledButton(_ title: String, symbol: String,
-                               action: @escaping () -> Void) -> some View {
+    private func detailHeader(_ title: String, subtitle: String, collapse: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: CapsuleTheme.symbol(module.id)).font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(accent).frame(width: 30, height: 30)
+                .background(accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 14, weight: .semibold))
+                Text(subtitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            iconButton(interaction.isPinned(module.id) ? "pin.fill" : "pin") { togglePin() }
+            iconButton("chevron.up", action: collapse)
+        }
+    }
+
+    private func labeledButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Label(title, systemImage: symbol)
-                .font(.system(size: 10, weight: .medium))
-        }.buttonStyle(.plain)
+            Label(title, systemImage: symbol).font(.system(size: 10, weight: .medium))
+                .frame(maxWidth: .infinity).frame(height: 30)
+        }.buttonStyle(CapsuleButtonStyle())
     }
 
     private var remindersDetail: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                Text("提醒事项").font(.system(size: 13, weight: .semibold))
-                Text("\(store.reminderCount)")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                iconButton(interaction.isPinned(module.id) ? "pin.fill" : "pin") { togglePin() }
-                iconButton("chevron.up") { store.setReminderExpanded(false) }
-                iconButton("xmark") { onClose() }
+            detailHeader("提醒事项", subtitle: "\(store.reminderCount) 项待办") {
+                store.setReminderExpanded(false)
             }
             Divider()
             ScrollView {
@@ -699,7 +707,8 @@ private struct GlassPill: View {
                                     Image(systemName: "circle")
                                         .font(.system(size: 13))
                                         .frame(width: 18, height: 18)
-                                }.buttonStyle(.plain)
+                                }.buttonStyle(.plain).help("完成此提醒事项")
+                                    .accessibilityLabel("完成：\(row.title)")
                                 Button {
                                     store.focusedReminderID = store.focusedReminderID == row.id
                                         ? nil : row.id
@@ -733,7 +742,7 @@ private struct GlassPill: View {
                         .onSubmit { saveReminder() }
                     iconButton("plus") { saveReminder() }
                 }
-                .padding(.vertical, 4)
+                .padding(9).background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
                 HStack(spacing: 8) {
                     Toggle("到期时间", isOn: $store.newReminderHasDue)
                         .toggleStyle(.checkbox).font(.system(size: 10))
@@ -754,13 +763,8 @@ private struct GlassPill: View {
 
     private var notesDetail: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                Text("Apple 备忘录").font(.system(size: 13, weight: .semibold))
-                Spacer()
-                iconButton("arrow.clockwise") { systemApps.openNotes() }
-                iconButton(interaction.isPinned(module.id) ? "pin.fill" : "pin") { togglePin() }
-                iconButton("chevron.up") { systemApps.setExpanded("notes", false) }
-                iconButton("xmark") { onClose() }
+            detailHeader("便笺", subtitle: "随手记下，稍后展开") {
+                systemApps.setExpanded("notes", false)
             }
             Divider()
             ScrollView {
@@ -775,7 +779,8 @@ private struct GlassPill: View {
                                 Text(note.title).lineLimit(1)
                                 Spacer()
                                 Image(systemName: "arrow.up.forward.app")
-                            }.font(.system(size: 11))
+                            }.font(.system(size: 12)).padding(10)
+                                .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
                         }.buttonStyle(.plain)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -785,15 +790,43 @@ private struct GlassPill: View {
                     .textFieldStyle(.plain).font(.system(size: 11))
                     .onSubmit { systemApps.createNote() }
                 iconButton("plus") { systemApps.createNote() }
-            }.padding(.vertical, 4)
-            Text("读取默认账户；点标题在备忘录中打开")
+            }.padding(9).background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+            HStack {
+                Text("点标题在备忘录中打开").font(.system(size: 10)).foregroundStyle(.secondary)
+                Spacer()
+                iconButton("arrow.clockwise") { systemApps.openNotes() }
+            }
+            Text("读取默认账户")
                 .font(.system(size: 9)).foregroundStyle(.secondary)
         }.padding(.vertical, 8)
     }
 
     private var musicDetail: some View {
-        HStack(alignment: .center, spacing: 13) {
-            musicArtwork(size: 112)
+        ViewThatFits(in: .horizontal) {
+            musicDetailFull.frame(minWidth: 440)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(systemApps.musicTitle).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                    Spacer(minLength: 2)
+                    iconButton("chevron.up") { systemApps.setExpanded("music", false) }
+                }
+                Text(systemApps.musicArtist).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                HStack {
+                    iconButton("backward.end.fill") { systemApps.musicCommand("previous") }
+                    iconButton(systemApps.musicPlaying ? "pause.fill" : "play.fill") { systemApps.musicCommand("toggle") }
+                    iconButton("forward.end.fill") { systemApps.musicCommand("next") }
+                    Spacer(minLength: 0)
+                    iconButton(interaction.isPinned("music") ? "pin.fill" : "pin") { togglePin() }
+                }
+                Text(systemApps.currentLyricText).font(.system(size: 11)).lineLimit(2)
+                lyricActions
+            }.padding(.vertical, 10)
+        }
+    }
+
+    private var musicDetailFull: some View {
+        HStack(alignment: .center, spacing: 16) {
+            musicArtwork(size: 120)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 3) {
                     Text(systemApps.musicTitle)
@@ -833,8 +866,8 @@ private struct GlassPill: View {
                 if let index = systemApps.currentLyricIndex {
                     Text(systemApps.timedLyrics[index].text)
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .lineLimit(1).id(index)
-                        .transition(.opacity.combined(with: .offset(y: 4)))
+                        .lineLimit(2).frame(height: 36, alignment: .leading).id(index)
+                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 3)))
                     if index + 1 < systemApps.timedLyrics.count {
                         Text(systemApps.timedLyrics[index + 1].text)
                             .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
@@ -846,6 +879,7 @@ private struct GlassPill: View {
                 lyricActions
             }
         }.padding(.vertical, 8)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: systemApps.currentLyricIndex)
     }
 
     @ViewBuilder private var lyricActions: some View {
@@ -918,13 +952,14 @@ private struct GlassPill: View {
         }
     }
 
-    private func iconButton(_ symbol: String, action: @escaping () -> Void) -> some View {
+    private func iconButton(_ symbol: String, label: String? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol).font(.system(size: 11, weight: .semibold))
-                .frame(width: 20, height: 24)
+                .frame(width: 26, height: 28)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(symbol)
+        .buttonStyle(CapsuleButtonStyle())
+        .help(label ?? CapsuleTheme.controlLabel(symbol))
+        .accessibilityLabel(label ?? CapsuleTheme.controlLabel(symbol))
     }
 
     private func saveReminder() {
@@ -948,22 +983,8 @@ private struct NeutralLevelSlider: View {
         HStack(spacing: 6) {
             Image(systemName: symbol).frame(width: 14)
             Text(title).frame(width: 26, alignment: .leading)
-            GeometryReader { geometry in
-                let width = geometry.size.width
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.primary.opacity(0.12)).frame(height: 4)
-                    Capsule().fill(.primary.opacity(0.65))
-                        .frame(width: max(2, width * value), height: 4)
-                    Circle().fill(.primary).frame(width: 9, height: 9)
-                        .offset(x: max(0, min(width - 9, width * value - 4.5)))
-                }
-                .frame(height: 18)
-                .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0).onChanged { gesture in
-                    value = min(1, max(0, gesture.location.x / max(1, width)))
-                })
-            }
-            .frame(height: 18)
+            Slider(value: $value, in: 0...1).controlSize(.small)
+                .accessibilityLabel("\(title)音量")
             Text("\(Int((value * 100).rounded()))")
                 .monospacedDigit().frame(width: 25, alignment: .trailing)
         }
@@ -971,7 +992,7 @@ private struct NeutralLevelSlider: View {
         .foregroundStyle(.primary)
         .opacity(enabled ? 1 : 0.35)
         .disabled(!enabled)
-        .frame(height: 24)
+        .frame(height: 26)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title)音量")
         .accessibilityValue("\(Int((value * 100).rounded()))%")
@@ -986,6 +1007,7 @@ private struct NeutralLevelSlider: View {
 }
 
 private struct GlassOrb: View {
+    let moduleID: String
     var body: some View {
         ZStack {
             if #available(macOS 26.0, *) {
@@ -995,6 +1017,9 @@ private struct GlassOrb: View {
             }
         }
         .overlay(Circle().strokeBorder(.white.opacity(0.38), lineWidth: 0.8))
+        .overlay(Image(systemName: CapsuleTheme.symbol(moduleID))
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(CapsuleTheme.accent(moduleID)))
         .clipShape(Circle())
     }
 }
@@ -1012,6 +1037,8 @@ private final class InteractiveHostingView<Content: View>: NSHostingView<Content
 }
 
 private final class NotchPanel: NSPanel {
+    var escapeAction: (() -> Void)?
+    override func cancelOperation(_ sender: Any?) { escapeAction?() }
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 }
@@ -1054,12 +1081,13 @@ final class BallView: NSView {
     var dockAlignment = 0 { didSet { updateLayout(); needsDisplay = true } }
     var reveal: CGFloat = 0 { didSet { updateLayout() } }
     var hovered: Int? { didSet { updateLayout(); needsDisplay = true } }
-    var selected: Int? { didSet { animateSelection() } }
+    var selected: Int? { didSet { if selected != oldValue { animateSelection() } } }
     private var morphingIndex: Int?
     private var pillProgress: CGFloat = 0
-    private var pillTimer: Timer?
+    private let pillAnimator = CapsuleAnimator()
+    private var selectionOrigin: CGRect?
     private var detailExtra: CGFloat = 0
-    private var detailTimer: Timer?
+    private let detailAnimator = CapsuleAnimator()
     private var pillHost: InteractiveHostingView<GlassPill>?
     private var hintsHost: PassiveHostingView<LongBreakHints>?
     private var hintsVisible = false
@@ -1079,16 +1107,16 @@ final class BallView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         store.reminderExpansionChanged = { [weak self] expanded in
-            self?.animateDetail(expanded, extra: 270)
+            self?.animateDetail(expanded, extra: 320)
         }
         systemApps.expansionChanged = { [weak self] module, expanded in
-            self?.animateDetail(expanded, extra: module == "notes" ? 220 : 110)
+            self?.animateDetail(expanded, extra: module == "notes" ? 280 : 148)
         }
         pomodoro.expansionChanged = { [weak self] expanded in
-            self?.animateDetail(expanded, extra: 360)
+            self?.animateDetail(expanded, extra: 424)
         }
-        for _ in config.modules {
-            let host = PassiveHostingView(rootView: GlassOrb())
+        for module in config.modules {
+            let host = PassiveHostingView(rootView: GlassOrb(moduleID: module.id))
             host.isHidden = true
             ballHosts.append(host)
             addSubview(host)
@@ -1100,7 +1128,7 @@ final class BallView: NSView {
     private var columns: Int { min(config.maxColumns, max(1, config.modules.count)) }
     private var rows: Int { (config.modules.count + columns - 1) / columns }
     private var rowStep: CGFloat { config.ballDiameter + 18 }
-    var maximumHeight: CGFloat { max(80, 50 + CGFloat(rows) * rowStep) + 360 + 64 }
+    var maximumHeight: CGFloat { max(80, 50 + CGFloat(rows) * rowStep) + 424 + 64 }
     var desiredHeight: CGFloat {
         max(80, 50 + CGFloat(rows) * rowStep) + detailExtra + (hintsVisible ? 64 : 0)
     }
@@ -1159,11 +1187,11 @@ final class BallView: NSView {
         let leftCount = selectedIndex - start
         let rightCount = end - selectedIndex - 1
         let satelliteStep: CGFloat = 22
-        let satelliteSize: CGFloat = 12
+        let satelliteSize: CGFloat = 18
         let gap: CGFloat = 12
         let desiredPillWidth: CGFloat = config.modules[selectedIndex].id == "music"
-            ? 430 + min(1, detailExtra / 110) * 70
-            : (config.modules[selectedIndex].id == "pomodoro" || config.modules[selectedIndex].id == "timer" ? 330 : 250)
+            ? 464 + min(1, detailExtra / 148) * 64
+            : (config.modules[selectedIndex].id == "pomodoro" || config.modules[selectedIndex].id == "timer" ? 354 : 310)
         let leftGap = leftCount > 0 ? gap : 0
         let rightGap = rightCount > 0 ? gap : 0
         let availablePillWidth = bounds.width - CGFloat(leftCount + rightCount) * satelliteStep - leftGap - rightGap - 32
@@ -1206,7 +1234,7 @@ final class BallView: NSView {
 
     private func updateLayout() {
         let t = min(1, max(0, reveal))
-        let eased = 1 - pow(1 - t, 3)
+        let eased = t
         for index in ballHosts.indices {
             let target = visualBallRect(for: index)
             let diameter = 3 + (target.width - 3) * eased
@@ -1221,23 +1249,31 @@ final class BallView: NSView {
             host.isHidden = t <= 0.01 || host.alphaValue < 0.01
         }
         if let index = morphingIndex, let pillHost {
-            let source = ball(at: index)
+            let source = selectionOrigin ?? ball(at: index)
             var destination = expandedLayout(for: index).pill
             destination.size.height += detailExtra
             pillHost.frame = mix(source, destination, pillProgress)
-            pillHost.alphaValue = pillProgress
+            pillHost.alphaValue = min(1, max(0, (pillProgress - 0.25) / 0.75))
             pillHost.isHidden = pillProgress < 0.01
         }
         updateHintLayout()
     }
 
     private func animateSelection() {
+        let previousExtra = detailExtra
+        selectionOrigin = selected != nil && morphingIndex != nil ? pillHost?.frame : nil
+        detailAnimator.cancel()
+        detailExtra = 0
         store.setReminderExpanded(false)
         systemApps.setExpanded("notes", false)
         systemApps.setExpanded("music", false)
         systemApps.setMusicVisible(selected.map { config.modules[$0].id == "music" } ?? false)
         pomodoro.setExpanded(false)
+        detailAnimator.cancel()
+        detailExtra = selected == nil ? previousExtra : 0
+        heightChanged?(desiredHeight)
         if let selected {
+            if selectionOrigin != nil { pillProgress = 0 }
             morphingIndex = selected
             pillHost?.removeFromSuperview()
             let module = config.modules[selected]
@@ -1260,39 +1296,32 @@ final class BallView: NSView {
         }
         let start = pillProgress
         let end: CGFloat = selected == nil ? 0 : 1
-        let began = Date()
-        pillTimer?.invalidate()
-        pillTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
-            guard let self else { timer.invalidate(); return }
-            let t = min(1, Date().timeIntervalSince(began) / 0.28)
-            let eased = 1 - pow(1 - t, 3)
-            self.pillProgress = start + (end - start) * eased
+        pillAnimator.animate(duration: selectionOrigin == nil ? 0.28 : 0.22) { [weak self] t in
+            guard let self else { return }
+            self.pillProgress = start + (end - start) * t
             self.updateLayout()
-            if t >= 1 {
-                timer.invalidate()
-                if self.selected == nil {
-                    self.pillHost?.removeFromSuperview()
-                    self.pillHost = nil
-                    self.morphingIndex = nil
-                    self.updateLayout()
-                }
+        } completion: { [weak self] in
+            guard let self else { return }
+            self.selectionOrigin = nil
+            if self.selected == nil {
+                self.pillHost?.removeFromSuperview()
+                self.pillHost = nil
+                self.morphingIndex = nil
+                self.detailExtra = 0
+                self.heightChanged?(self.desiredHeight)
             }
+            self.updateLayout()
         }
     }
 
     private func animateDetail(_ expanded: Bool, extra: CGFloat) {
         let start = detailExtra
         let end: CGFloat = expanded ? extra : 0
-        let began = Date()
-        detailTimer?.invalidate()
-        detailTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
-            guard let self else { timer.invalidate(); return }
-            let t = min(1, Date().timeIntervalSince(began) / 0.28)
-            let eased = 1 - pow(1 - t, 3)
-            self.detailExtra = start + (end - start) * eased
+        detailAnimator.animate { [weak self] t in
+            guard let self else { return }
+            self.detailExtra = start + (end - start) * t
             self.heightChanged?(self.desiredHeight)
             self.updateLayout()
-            if t >= 1 { timer.invalidate() }
         }
     }
 
@@ -1330,12 +1359,7 @@ final class BallView: NSView {
         if let index = config.modules.indices.first(where: {
             $0 != morphingIndex && visualBallRect(for: $0).insetBy(dx: -7, dy: -7).contains(point)
         }) {
-            if selected != nil {
-                self.selected = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.29) { [weak self] in
-                    self?.selected = index
-                }
-            } else { selected = index }
+            selected = index
         }
         pointerChanged?()
     }
@@ -1373,10 +1397,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cyclePresetItems: [NSMenuItem] = []
     private var basePresetItems: [NSMenuItem] = []
     private var autoNoiseItem: NSMenuItem!
-    private var timer: Timer?
-    private var transitionStart = Date()
-    private var transitionFrom: CGFloat = 0
-    private var transitionTo: CGFloat = 0
+    private let revealAnimator = CapsuleAnimator()
     private var collapseWork: DispatchWorkItem?
     private var pointerInsideOverlay = false
     private var wasSessionActive = false
@@ -1440,7 +1461,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.updatePlacement(refreshFullscreen: false)
         }
 
+        (overlay as? NotchPanel)?.escapeAction = { [weak self] in
+            guard let self else { return }
+            self.overlay.makeFirstResponder(nil)
+            self.moduleStore.setReminderExpanded(false)
+            self.systemApps.setExpanded("notes", false)
+            self.systemApps.setExpanded("music", false)
+            self.pomodoro.setExpanded(false)
+            if self.preferredPinnedIndex() == nil { self.balls.selected = nil }
+            self.scheduleCollapse()
+        }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.setAccessibilityLabel("Notch Balls Prototype")
+        statusItem.button?.toolTip = "Notch Balls · 提醒、便笺、音乐与专注"
         let menu = NSMenu()
         let positionMenu = NSMenu(title: "位置")
         positionItems = DockPosition.allCases.map { position in
@@ -1578,6 +1611,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return event
         }
         if let local { mouseMonitors.append(local) }
+        if let keyboard = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
+            guard let self, event.keyCode == 53, event.window === self.overlay,
+                  self.lyricInteractionCount == 0 else { return event }
+            // Field editors otherwise consume Escape before the panel sees it.
+            (self.overlay as? NotchPanel)?.escapeAction?()
+            return nil
+        }) { mouseMonitors.append(keyboard) }
         updatePlacement(refreshFullscreen: true)
     }
 
@@ -1772,7 +1812,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc private func showStatistics() {
         if statsWindow == nil {
-            let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 700, height: 390),
+            let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 700, height: 520),
                                   styleMask: [.titled, .closable],
                                   backing: .buffered, defer: false)
             window.title = "专注统计"
@@ -1848,6 +1888,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let task = DispatchWorkItem { [weak self] in
             guard let self else { return }
             guard self.lyricInteractionCount == 0 else { return }
+            if self.overlay.isKeyWindow,
+               let editor = self.overlay.firstResponder as? NSTextView, editor.isFieldEditor {
+                // A pointer leaving the capsule must not dismiss an active text edit.
+                self.scheduleCollapse()
+                return
+            }
             self.controlsArmed = false
             self.overlay.ignoresMouseEvents = true
             if let index = self.preferredPinnedIndex() {
@@ -1866,22 +1912,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func transition(to value: CGFloat) {
-        transitionFrom = balls.reveal
-        transitionTo = value
-        transitionStart = Date()
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
-            guard let self else { timer.invalidate(); return }
-            let elapsed = Date().timeIntervalSince(self.transitionStart)
-            let t = min(1, elapsed / self.config.emergeDuration)
-            self.balls.reveal = self.transitionFrom + (self.transitionTo - self.transitionFrom) * t
+        let start = balls.reveal
+        if abs(start - value) < 0.001 {
+            revealAnimator.cancel()
+            if value == 0 { overlay.orderOut(nil) }
+            return
+        }
+        revealAnimator.animate(duration: config.emergeDuration) { [weak self] t in
+            guard let self else { return }
+            self.balls.reveal = start + (value - start) * t
             self.updatePointerRouting()
-            if t >= 1 {
-                timer.invalidate()
-                if self.transitionTo == 0 { self.overlay.orderOut(nil) }
-            }
+        } completion: { [weak self] in
+            if value == 0 { self?.overlay.orderOut(nil) }
         }
     }
+
 }
 
 let app = NSApplication.shared

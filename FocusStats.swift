@@ -22,6 +22,7 @@ struct FocusStatsView: View {
 
     private func monthTitle(_ week: Int) -> String {
         let current = day(week, 0)
+        if week == 0 && Calendar.current.component(.day, from: current) > 21 { return "" }
         if week > 0 && Calendar.current.component(.month, from: current)
             == Calendar.current.component(.month, from: day(week - 1, 0)) {
             return ""
@@ -59,6 +60,7 @@ struct FocusStatsView: View {
     }
 
     var body: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .firstTextBaseline) {
                 Text("专注统计").font(.system(size: 21, weight: .semibold))
@@ -66,12 +68,11 @@ struct FocusStatsView: View {
                 Text("过去一年").font(.system(size: 12)).foregroundStyle(.secondary)
             }
 
-            HStack(spacing: 36) {
+            HStack(spacing: 12) {
                 metric("今日", value: "\(pomodoro.today.sessions) 次",
                        detail: durationText(pomodoro.today.seconds))
                 metric("累计", value: "\(pomodoro.totalFocus.sessions) 次",
                        detail: durationText(pomodoro.totalFocus.seconds))
-                Spacer()
             }
 
             VStack(alignment: .leading, spacing: 9) {
@@ -98,7 +99,7 @@ struct FocusStatsView: View {
                                 let date = day(week, weekday)
                                 let record = pomodoro.focusDay(on: date)
                                 RoundedRectangle(cornerRadius: 2)
-                                    .fill(.primary.opacity(shade(record.seconds)))
+                                    .fill(CapsuleTheme.accent("pomodoro").opacity(shade(record.seconds)))
                                     .frame(width: cell, height: cell)
                                     .opacity(date > today ? 0 : 1)
                                     .help("\(dateText(date)) · \(record.sessions) 次 · \(durationText(record.seconds))")
@@ -111,7 +112,7 @@ struct FocusStatsView: View {
                     Text("少").font(.system(size: 10)).foregroundStyle(.secondary)
                     ForEach([0, 15, 25, 50, 100], id: \.self) { minutes in
                         RoundedRectangle(cornerRadius: 2)
-                            .fill(.primary.opacity(shade(minutes)))
+                            .fill(CapsuleTheme.accent("pomodoro").opacity(shade(minutes * 60)))
                             .frame(width: cell, height: cell)
                     }
                     Text("多").font(.system(size: 10)).foregroundStyle(.secondary)
@@ -151,7 +152,8 @@ struct FocusStatsView: View {
             Spacer(minLength: 0)
         }
         .padding(24)
-        .frame(width: 700, height: 390)
+        }
+        .frame(width: 700, height: 520)
         .background(.regularMaterial)
     }
 
@@ -161,5 +163,8 @@ struct FocusStatsView: View {
             Text(value).font(.system(size: 19, weight: .semibold, design: .rounded))
             Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(CapsuleTheme.accent("pomodoro").opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
     }
 }

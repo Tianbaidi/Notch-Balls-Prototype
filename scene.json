@@ -1,13 +1,29 @@
 {
-  "ballDiameter": 16,
+  "ballDiameter": 22,
   "spacing": 12,
-  "emergeDuration": 0.42,
-  "collapseDelay": 0.55,
+  "emergeDuration": 0.32,
+  "collapseDelay": 0.7,
   "maxColumns": 7,
   "modules": [
-    { "id": "reminders", "title": "提醒事项", "detail": "查看、新增和完成提醒事项" },
-    { "id": "notes", "title": "便笺", "detail": "查看和新建 Apple 备忘录" },
-    { "id": "music", "title": "音乐", "detail": "系统正在播放与歌词" },
-    { "id": "pomodoro", "title": "番茄钟", "detail": "专注、休息与统计" }
+    {
+      "id": "reminders",
+      "title": "提醒事项",
+      "detail": "查看、新增和完成提醒事项"
+    },
+    {
+      "id": "notes",
+      "title": "便笺",
+      "detail": "查看和新建 Apple 备忘录"
+    },
+    {
+      "id": "music",
+      "title": "音乐",
+      "detail": "系统正在播放与歌词"
+    },
+    {
+      "id": "pomodoro",
+      "title": "番茄钟",
+      "detail": "专注、休息与统计"
+    }
   ]
 }
