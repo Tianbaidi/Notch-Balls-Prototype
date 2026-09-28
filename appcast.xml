@@ -1,6 +1,26 @@
-<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+<?xml version='1.0' encoding='utf-8'?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
   <channel>
+    <item>
+      <title>Notch Balls Prototype 0.36 — 未公证测试版 / Unnotarized test</title>
+      <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.36</link>
+      <sparkle:version>36</sparkle:version>
+      <sparkle:shortVersionString>0.36</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <sparkle:minimumAutoupdateVersion>36</sparkle:minimumAutoupdateVersion>
+      <pubDate>Mon, 28 Sep 2026 15:40:09 +0000</pubDate>
+      <description sparkle:format="plain-text">未公证测试版（Unnotarized test build）。仅用于现有安装的更新验证，不是正式公开版；未通过 Developer ID 签名或 Apple 公证。
+
+自动更新流程验证版本：
+- 固定 macOS 14.0+ / Apple silicon 构建目标。
+- 更新包通过 Sparkle Ed25519 签名，并在解压前验证签名。
+- 验证从已安装的 0.35 检查、下载、安装和重新启动更新。
+
+本版本使用临时代码签名，未通过 Developer ID 签名和 Apple 公证。
+仅用于现有安装的更新测试，不是正式公开版；新 Mac 的首次安装可能被 Gatekeeper 阻止。</description>
+      <enclosure url="https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/download/v0.36/Notch-Balls-Prototype-0.36-macOS-arm64.zip" length="7983664" type="application/octet-stream" sparkle:edSignature="Buio7Ani2AvcRr3OelFZYdmK/7uuE3Q6rrZrbnlaokgbl1XvoA6wc4A8mgkxmZtckN5no9A4WeqmcAXzx0oIAg==" />
+    </item>
     <title>Notch Balls Prototype 更新</title>
     <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases</link>
     <description>Notch Balls Prototype 的 Sparkle 更新清单</description>
