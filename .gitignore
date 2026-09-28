@@ -7,3 +7,10 @@ deep-noise.wav
 .env.*
 *.key
 *.pem
+.local-backups/
+dist/
+build/
+__pycache__/
+*.p12
+*.pfx
+*.mobileprovision

@@ -2,9 +2,10 @@
 
 ## 更新
 
-菜单栏增加“检查更新”。应用已嵌入 Sparkle 2.10.0。更新清单已发布在 [Tianbaidi/Notch-Balls-Prototype](https://github.com/Tianbaidi/Notch-Balls-Prototype/blob/main/appcast.xml) 的 `main/appcast.xml`，准确地址及 EdDSA 公钥保存在 `UpdateConfig.plist`。签名私钥保存在本机登录钥匙串的 `Notch-Balls-Prototype` 账户下。默认 `./build.sh` 会启用更新检查；`ENABLE_UPDATES=0 ./build.sh` 可构建禁用更新的本地版本。当前清单没有任何 Release，检查时不会发现新版本。
-
-默认构建会将地址、公钥写入 `Info.plist`；需要检查远程清单可访问且 XML 有效时运行 `VERIFY_UPDATE_FEED=1 ./build.sh`。后续每个版本要递增 `CFBundleVersion`，对只包含 `.app` 的更新 ZIP 使用 `vendor/bin/sign_update --account Notch-Balls-Prototype` 签名，上传 GitHub Releases，并将对应版本、下载地址、签名和长度加入 appcast。私钥不能放入仓库。公开分发还需用稳定的 Developer ID 身份签名并公证；`build.sh` 当前只执行本地临时签名，不能直接用于公开发布。
+菜单栏“检查更新”使用 Sparkle 2.10.0，从仓库 `main/appcast.xml` 获取更新。
+发布工具、测试版与正式版的区别、故障恢复步骤见 [自动更新发布流程](RELEASE.md)。
+`./build.sh` 默认只做本地临时签名；正式发布必须使用 Developer ID 签名并通过 Apple 公证。
+不要将未公证测试版称为正式公开版。私钥始终留在本机钥匙串。
 
 本版为番茄钟展开界面增加“结束并记录”按钮；紧凑胶囊运行中的停止按钮也执行同一操作。结束后解除番茄钟的自动 Pin，并将本次主题的实际专注时长保存为一条记录。例如 `CMC problem`：25 + 25 + 10 分钟，保存为一条 60 分钟记录，休息时间不计入。
 
