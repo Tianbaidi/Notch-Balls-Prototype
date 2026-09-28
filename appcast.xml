@@ -2,6 +2,32 @@
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
   <channel>
     <item>
+      <title>Notch Balls Prototype 0.37 — 未公证测试版 / Unnotarized test</title>
+      <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.37</link>
+      <sparkle:version>37</sparkle:version>
+      <sparkle:shortVersionString>0.37</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <sparkle:minimumAutoupdateVersion>37</sparkle:minimumAutoupdateVersion>
+      <pubDate>Mon, 28 Sep 2026 23:32:17 +0000</pubDate>
+      <description sparkle:format="plain-text">未公证测试版（Unnotarized test build）。仅用于现有安装的更新验证，不是正式公开版；未通过 Developer ID 签名或 Apple 公证。
+
+0.37 · 体验与视觉优化
+
+- 小球增加清晰的模块图标；按钮扩大点击区域，统一悬停、按压反馈和中文提示。
+- 番茄钟重排为目标与计时卡片、主要操作和环境声区域，减少重复操作入口。
+- 音乐在窄位置自动精简布局，展开时留出更舒适的歌词空间。
+- 提醒事项、便笺统一标题层级和快速输入区域。
+- 快速切换模块时直接衔接；动画可打断，在控件拖动期间继续运行。
+- 输入时移开鼠标不会意外收起；Esc 退出编辑并收起详情。
+- 固定穿透时暂停光晕动画，低电量模式使用静态光晕，支持系统减少动态效果与减少透明度。
+- 专注统计采用卡片布局，修复热力图图例单位及月份标题重叠。
+
+保持原有专注记录、设置、提醒事项和便笺数据，不需要重新配置。
+本版本仍为临时代码签名、Sparkle Ed25519 签名的未公证测试版，不是正式公开版。</description>
+      <enclosure url="https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/download/v0.37/Notch-Balls-Prototype-0.37-macOS-arm64.zip" length="8042370" type="application/octet-stream" sparkle:edSignature="t/RZS0GKsz8oahhAV5UbE1LaIDzi2OkoEy06Vnr1XzTrBBfJmgkWk1zzDFTwbWR9jyDdwmts+fonArMzTmmBBg==" />
+    </item>
+    <item>
       <title>Notch Balls Prototype 0.36 — 未公证测试版 / Unnotarized test</title>
       <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.36</link>
       <sparkle:version>36</sparkle:version>
