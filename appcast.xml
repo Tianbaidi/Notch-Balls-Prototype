@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Notch Balls Prototype 更新</title>
+    <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases</link>
+    <description>Notch Balls Prototype 的 Sparkle 更新清单</description>
+    <language>zh-CN</language>
+  </channel>
+</rss>
