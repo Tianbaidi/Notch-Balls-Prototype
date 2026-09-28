@@ -21,6 +21,7 @@
 - stable 模式缺少 Developer ID 时提前拒绝；同一版本 prepare 再次执行拒绝覆盖原包。
 - GitHub v0.36 是可匿名下载的 prerelease；v0.35 草稿保留。
 - 发布脚本在匿名下载并验证附件后才写入 appcast。
+- 对相同 manifest 再次执行 publish 成功：远端原附件逐一比对通过，未覆盖附件、未新增清单提交。
 - 使用真实 SUFeedURL（无替代测试地址）匿名读取线上清单并下载包，版本 36、长度、签名和 SHA-256 全部匹配。
 - Gatekeeper 评估测试应用返回 `rejected`；没有关闭安全设置，也没有删除隔离属性。
 
