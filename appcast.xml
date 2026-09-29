@@ -2,6 +2,30 @@
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
   <channel>
     <item>
+      <title>Notch Balls Prototype 0.38 — 未公证测试版 / Unnotarized test</title>
+      <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.38</link>
+      <sparkle:version>38</sparkle:version>
+      <sparkle:shortVersionString>0.38</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <sparkle:minimumAutoupdateVersion>38</sparkle:minimumAutoupdateVersion>
+      <pubDate>Tue, 29 Sep 2026 02:31:06 +0000</pubDate>
+      <description sparkle:format="plain-text">未公证测试版（Unnotarized test build）。仅用于现有安装的更新验证，不是正式公开版；未通过 Developer ID 签名或 Apple 公证。
+
+0.38 · 稳定歌词显示与完整检索
+
+- 修复歌词长短变化时，音乐胶囊在“歌名＋歌词”和“仅歌名”之间切换的问题，恢复安静稳定的布局。
+- 新增完整歌词检索窗口：编辑歌名、歌手、专辑，回车搜索、取消查询、预览歌词、比较时长差并选择版本；入口在展开面板的放大镜按钮。
+- 改善美区 Music 英文译名检索：尝试按歌手、专辑和时长寻找候选，不同曲名须人工确认；可输入中文原名，按本曲记住检索条件。
+- 收紧合唱、现场/混音等版本与时长匹配；修复网易云同名缓存可能误选错误歌手的问题。
+- 保持已选歌词，避免后到的搜索结果反复替换；容忍播放信息短暂缺失和小幅时长变化，切歌后丢弃旧结果。
+- 手动确认只影响当前歌曲，不再自动推断全局歌手别名。保留已有设置、专注记录与本地歌词。
+
+译名候选依赖歌词源的目录覆盖，不能保证每首歌均能自动找到。
+本版本为临时代码签名、Sparkle Ed25519 签名的未公证测试版，不是正式公开版。</description>
+      <enclosure url="https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/download/v0.38/Notch-Balls-Prototype-0.38-macOS-arm64.zip" length="8106702" type="application/octet-stream" sparkle:edSignature="q0AGzkwEUCoU9eQPT2ugDqwxq8CEwHMX6hkiHpqmnL9TpymorCIsjYiIqxbskc79UZxIxqZTNYYokYg4WQfvCw==" />
+    </item>
+    <item>
       <title>Notch Balls Prototype 0.37 — 未公证测试版 / Unnotarized test</title>
       <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.37</link>
       <sparkle:version>37</sparkle:version>
