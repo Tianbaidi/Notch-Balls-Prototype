@@ -148,7 +148,7 @@ enum NeteaseLyricSource {
             sqlite3_bind_text(statement, 1, pointer, -1,
                 unsafeBitCast(-1, to: sqlite3_destructor_type.self))
         }
-        var matches: [(id: String, score: Int)] = []
+        var matches: [(id: String, score: Double)] = []
         while sqlite3_step(statement) == SQLITE_ROW {
             guard let idPointer = sqlite3_column_text(statement, 0),
                   let jsonPointer = sqlite3_column_text(statement, 1) else { continue }
@@ -158,15 +158,13 @@ enum NeteaseLyricSource {
                   let row = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
                   row["name"] as? String == title else { continue }
             let trackDuration = (row["duration"] as? NSNumber)?.doubleValue ?? 0
-            if let duration, trackDuration > 0,
-               abs(trackDuration / 1000 - duration) > 12 { continue }
             let artists = (row["artists"] as? [[String: Any]] ?? [])
-                .compactMap { $0["name"] as? String }
-            let artistMatch = artists.contains {
-                artist.localizedCaseInsensitiveContains($0) ||
-                $0.localizedCaseInsensitiveContains(artist)
-            }
-            matches.append((id, artistMatch ? 2 : 1))
+                .compactMap { $0["name"] as? String }.joined(separator: " / ")
+            let query = LyricQuery(title: title, artist: artist, album: "", duration: duration)
+            guard let score = query.score(title: row["name"] as? String ?? "", artist: artists,
+                                          album: "", duration: trackDuration > 0 ? trackDuration / 1000 : nil),
+                  score >= 100 else { continue }
+            matches.append((id, score))
         }
         let ranked = matches.sorted { $0.score > $1.score }
         guard let first = ranked.first,
@@ -204,5 +202,39 @@ enum NeteaseLyricSource {
             completion(.success(LyricsService.Response(timed: lines,
                 plain: lines.isEmpty ? source : nil)))
         }.resume()
+    }
+}
+
+/// Tolerate incomplete snapshots and subsecond duration jitter without treating them as a new song.
+struct MusicTrackIdentity {
+    let title: String
+    let artist: String
+    let album: String
+    let bundle: String?
+    let duration: Double
+
+    func matches(_ other: MusicTrackIdentity) -> Bool {
+        func compatible(_ a: String, _ b: String) -> Bool {
+            a.isEmpty || b.isEmpty || LyricQuery.normalize(a) == LyricQuery.normalize(b)
+        }
+        guard !title.isEmpty, LyricQuery.normalize(title) == LyricQuery.normalize(other.title),
+              compatible(artist, other.artist), compatible(album, other.album),
+              compatible(bundle ?? "", other.bundle ?? "") else { return false }
+        return duration <= 0 || other.duration <= 0 || abs(duration - other.duration) <= 3
+    }
+}
+
+
+extension MusicTrackIdentity {
+    /// Reuse per-song corrections when a later playback reports a slightly different duration.
+    static func persistedKey(_ proposed: String, existing: [String]) -> String {
+        let parts = proposed.components(separatedBy: "\u{1f}")
+        guard parts.count == 4, let duration = Double(parts[3]), duration > 0 else { return proposed }
+        return existing.compactMap { key -> (String, Double)? in
+            let other = key.components(separatedBy: "\u{1f}")
+            guard other.count == 4, Array(other.prefix(3)) == Array(parts.prefix(3)),
+                  let length = Double(other[3]), length > 0, abs(length - duration) <= 3 else { return nil }
+            return (key, abs(length - duration))
+        }.sorted { $0.1 == $1.1 ? $0.0 < $1.0 : $0.1 < $1.1 }.first?.0 ?? proposed
     }
 }

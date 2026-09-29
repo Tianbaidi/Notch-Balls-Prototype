@@ -63,8 +63,13 @@ final class SystemAppsStore: ObservableObject {
     @Published private(set) var independentLyricsEnabled = UserDefaults.standard.bool(forKey: "notch.music.independentLyrics.v1")
     @Published private(set) var extraLyricsEnabled = UserDefaults.standard.bool(forKey: "notch.music.extraLyrics.v1")
     @Published private(set) var lyricSearchSummary = ""
-    private var lyricsTrackKey: String?
+    @Published private(set) var lyricsSearching = false
+    @Published private(set) var lyricsTrackKey: String?
+    private var musicIdentity: MusicTrackIdentity?
+    private var missingMusicSnapshots = 0
+    private var lyricSearchWindow: LyricSearchWindowController?
     private var lyricLookupKey: String?
+    private var lyricSearchTask: Task<Void, Never>?
     private var artworkKey: String?
     private var currentPlayerBundle: String?
     var lyricInteractionChanged: ((Bool) -> Void)?
@@ -168,70 +173,104 @@ final class SystemAppsStore: ObservableObject {
                 guard let self else { return }
                 self.musicFetchInFlight = false
                 switch result {
-                case .failure(let error): self.musicArtist = error.localizedDescription
+                case .failure: break
                 case .success(let snapshot):
-                    self.musicAvailable = snapshot.available
-                    guard snapshot.available else {
-                        self.musicTitle = "正在播放"
-                        self.musicArtist = "系统中没有正在播放的内容"
-                        self.musicSource = "系统"
-                        self.musicPlaying = false
-                        self.musicAlbum = ""
-                        self.musicArtwork = nil
-                        self.artworkKey = nil
-                        self.musicElapsed = 0
-                        self.musicDuration = 0
-                        self.currentPlayerBundle = nil
-                        self.timedLyrics = []
-                        self.plainLyrics = nil
-                        self.lyricLookupKey = nil
-                        self.lyricsTrackKey = nil
-                        self.lyricCandidates = []
-                        self.selectedLyricID = nil
-                        self.lyricOffset = 0
-                        self.lyricSourceLabel = "歌词"
-                        return
-                    }
-                    let title = snapshot.title ?? "未知歌曲"
-                    let artist = snapshot.artist ?? "未知歌手"
-                    self.musicTitle = title
-                    self.musicArtist = artist
-                    self.musicAlbum = snapshot.album ?? ""
-                    self.currentPlayerBundle = snapshot.bundle
-                    self.musicSource = snapshot.bundle.flatMap {
-                        NSRunningApplication.runningApplications(withBundleIdentifier: $0).first?.localizedName
-                    } ?? "正在播放"
-                    self.musicPlaying = snapshot.playing ?? false
-                    self.musicElapsed = snapshot.elapsed ?? 0
-                    self.musicDuration = snapshot.duration ?? 0
-                    let key = title + "\u{1f}" + artist + "\u{1f}"
-                        + self.musicAlbum + "\u{1f}" + String(Int(self.musicDuration))
-                    if self.artworkKey != key {
-                        self.artworkKey = key
-                        self.musicArtwork = nil
-                        self.fetchArtwork(key: key)
-                    }
-                    if self.lyricsTrackKey != key {
-                        self.lyricsTrackKey = key
-                        self.lyricLookupKey = nil
-                        self.timedLyrics = []
-                        self.plainLyrics = nil
-                        self.lyricCandidates = []
-                        self.selectedLyricID = nil
-                        self.lyricSearchSummary = ""
-                        self.lyricOffset = (UserDefaults.standard.dictionary(forKey: "notch.music.lyricOffsets.v1")?[key] as? Double) ?? 0
-                        self.lyricStatus = "点开选择歌词来源"
-                        self.lyricSourceLabel = "歌词"
-                        self.restoreLocalLyrics(key: key)
-                    }
-                    if (self.onlineLyricsEnabled || self.neteaseLyricsEnabled || self.extraLyricsEnabled || self.independentLyricsEnabled) &&
-                       self.lyricLookupKey == nil {
-                        self.fetchLyrics(title: title, artist: artist,
-                                         duration: snapshot.duration,
-                                         bundle: snapshot.bundle, key: key)
-                    }
+                    self.acceptMusicSnapshot(snapshot)
                 }
             }
+        }
+    }
+
+    private func acceptMusicSnapshot(_ snapshot: NowPlayingSnapshot) {
+        guard snapshot.available, let incomingTitle = snapshot.title, !incomingTitle.isEmpty else {
+            missingMusicSnapshots += 1
+            guard missingMusicSnapshots >= 3 else { return }
+            self.musicAvailable = false
+            self.musicTitle = "正在播放"
+            self.musicArtist = "系统中没有正在播放的内容"
+            self.musicSource = "系统"
+            self.musicPlaying = false
+            self.musicAlbum = ""
+            self.musicArtwork = nil
+            self.artworkKey = nil
+            self.musicElapsed = 0
+            self.musicDuration = 0
+            self.currentPlayerBundle = nil
+            self.timedLyrics = []
+            self.plainLyrics = nil
+            self.lyricLookupKey = nil
+            self.lyricsTrackKey = nil
+            self.musicIdentity = nil
+            self.lyricSearchTask?.cancel()
+            self.lyricsSearching = false
+            self.lyricCandidates = []
+            self.selectedLyricID = nil
+            self.lyricOffset = 0
+            self.lyricSourceLabel = "歌词"
+            self.lyricStatus = "等待播放"
+            self.lyricSearchSummary = ""
+            return
+        }
+        missingMusicSnapshots = 0
+        let duration = snapshot.duration.flatMap { $0.isFinite && $0 > 0 && $0 < 604800 ? $0 : nil }
+        let identity = MusicTrackIdentity(title: incomingTitle, artist: snapshot.artist ?? "",
+            album: snapshot.album ?? "", bundle: snapshot.bundle, duration: duration ?? 0)
+        let sameTrack = musicIdentity?.matches(identity) == true
+        if !sameTrack { musicIdentity = identity }
+        // Fill missing identity fields once without moving the duration anchor every second.
+        else if let old = musicIdentity {
+            musicIdentity = MusicTrackIdentity(title: old.title,
+                artist: old.artist.isEmpty ? identity.artist : old.artist,
+                album: old.album.isEmpty ? identity.album : old.album,
+                bundle: old.bundle ?? identity.bundle,
+                duration: old.duration > 0 ? old.duration : identity.duration)
+        }
+        self.musicAvailable = true
+        let title = incomingTitle
+        let artist = snapshot.artist.flatMap { $0.isEmpty ? nil : $0 } ?? (sameTrack ? musicArtist : "未知歌手")
+        self.musicTitle = title
+        self.musicArtist = artist
+        self.musicAlbum = snapshot.album.flatMap { $0.isEmpty ? nil : $0 } ?? (sameTrack ? musicAlbum : "")
+        self.currentPlayerBundle = snapshot.bundle ?? (sameTrack ? currentPlayerBundle : nil)
+        self.musicSource = currentPlayerBundle.flatMap {
+            NSRunningApplication.runningApplications(withBundleIdentifier: $0).first?.localizedName
+        } ?? "正在播放"
+        self.musicPlaying = snapshot.playing ?? (sameTrack ? musicPlaying : false)
+        self.musicElapsed = snapshot.elapsed.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil } ?? (sameTrack ? musicElapsed : 0)
+        self.musicDuration = duration ?? (sameTrack ? musicDuration : 0)
+        let proposedKey = title + "\u{1f}" + artist + "\u{1f}"
+            + self.musicAlbum + "\u{1f}" + String(Int(self.musicDuration))
+        let key: String
+        if sameTrack, let existing = lyricsTrackKey { key = existing }
+        else {
+            let storedKeys = ["searchOverrides", "lyricSelections", "lyricOffsets", "localLyrics"].flatMap { name in
+                Array((UserDefaults.standard.dictionary(forKey: "notch.music.\(name).v1") ?? [:]).keys)
+            }
+            key = MusicTrackIdentity.persistedKey(proposedKey, existing: storedKeys)
+        }
+        if self.artworkKey != key {
+            self.artworkKey = key
+            self.musicArtwork = nil
+            self.fetchArtwork(key: key)
+        }
+        if !sameTrack || self.lyricsTrackKey != key {
+            self.lyricsTrackKey = key
+            self.lyricSearchTask?.cancel()
+            self.lyricsSearching = false
+            self.lyricLookupKey = nil
+            self.timedLyrics = []
+            self.plainLyrics = nil
+            self.lyricCandidates = []
+            self.selectedLyricID = nil
+            self.lyricSearchSummary = ""
+            self.lyricOffset = (UserDefaults.standard.dictionary(forKey: "notch.music.lyricOffsets.v1")?[key] as? Double) ?? 0
+            self.lyricStatus = "点开选择歌词来源"
+            self.lyricSourceLabel = "歌词"
+            self.restoreLocalLyrics(key: key)
+        }
+        if (self.onlineLyricsEnabled || self.neteaseLyricsEnabled || self.extraLyricsEnabled || self.independentLyricsEnabled) &&
+           self.lyricLookupKey == nil {
+            self.retryLyrics()
         }
     }
 
@@ -241,7 +280,7 @@ final class SystemAppsStore: ObservableObject {
             let result = NowPlayingBridge.run(command: command)
             DispatchQueue.main.async {
                 guard let self else { return }
-                if case .failure(let error) = result { self.musicArtist = error.localizedDescription }
+                if case .failure(let error) = result { self.lyricSearchSummary = error.localizedDescription }
                 else { self.openMusic() }
             }
         }
@@ -252,7 +291,7 @@ final class SystemAppsStore: ObservableObject {
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) {
             NSWorkspace.shared.openApplication(at: url, configuration: .init()) { [weak self] _, error in
                 DispatchQueue.main.async {
-                    if let error { self?.musicArtist = error.localizedDescription }
+                    if let error { self?.lyricSearchSummary = error.localizedDescription }
                     else { self?.openMusic() }
                 }
             }
@@ -312,8 +351,9 @@ final class SystemAppsStore: ObservableObject {
 
     func retryLyrics() {
         guard musicAvailable, let key = lyricsTrackKey else { return }
-        fetchLyrics(title: musicTitle, artist: musicArtist, duration: musicDuration,
-                    bundle: currentPlayerBundle, key: key)
+        let query = lyricSearchQuery
+        fetchLyrics(title: query.title, artist: query.artist, duration: musicDuration,
+                    bundle: currentPlayerBundle, key: key, album: query.album)
     }
 
     func disableOnlineLyrics() {
@@ -327,34 +367,41 @@ final class SystemAppsStore: ObservableObject {
         }
         // Invalidate callbacks that are already in flight.
         lyricLookupKey = nil
+        lyricSearchTask?.cancel()
+        lyricsSearching = false
         lyricSearchSummary = "联网查询已关闭"
     }
 
     private func fetchLyrics(title: String, artist: String, duration: Double?,
-                             bundle: String?, key: String) {
+                             bundle: String?, key: String, album: String? = nil, manual: Bool = false) {
+        lyricSearchTask?.cancel()
         let requestID = key + UUID().uuidString
         lyricLookupKey = requestID
         guard onlineLyricsEnabled || extraLyricsEnabled || neteaseLyricsEnabled || independentLyricsEnabled else {
+            lyricsSearching = false
             lyricStatus = "联网查询已关闭"
             return
         }
+        lyricsSearching = true
         lyricStatus = "正在查询歌词…"
         lyricSearchSummary = "正在匹配…"
-        let query = LyricQuery(title: title, artist: artist, album: musicAlbum, duration: duration)
+        let query = LyricQuery(title: title, artist: artist, album: album ?? musicAlbum, duration: duration)
         let extraSources = extraLyricsEnabled
         let lrclib = onlineLyricsEnabled || extraLyricsEnabled
         let artistLookup = artistLookupEnabled
         let externalSearch: () -> Void = { [weak self] in
             guard let self, self.lyricsTrackKey == key, self.lyricLookupKey == requestID else { return }
             self.lyricSearchSummary = "查询歌词，未命中时自动回退…"
-            MultiLyricsService.fetch(query: query, includeExtraSources: extraSources,
+            self.lyricSearchTask = MultiLyricsService.fetch(query: query, includeExtraSources: extraSources,
                                     includeIndependentSource: true, includeLRCLIB: lrclib, includeArtistLookup: artistLookup) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self, self.lyricsTrackKey == key, self.lyricLookupKey == requestID else { return }
-                    self.addCandidates(result.candidates, key: key)
+                    self.lyricsSearching = false
+                    self.addCandidates(result.candidates, key: key, automatic: !manual)
                     let failed = result.failedSources.joined(separator: "、")
                     let fallbackUsed = result.candidates.contains { $0.source == "VV 歌词" }
-                    self.lyricSearchSummary = fallbackUsed ? "已自动回退至 VV 歌词" : "查询完成"
+                    self.lyricSearchSummary = result.candidates.isEmpty ? "未找到新候选，试试原文歌名或更准确的歌手名" :
+                        (fallbackUsed ? "已找到候选 · 包含 VV 歌词" : "找到 \(result.candidates.count) 个候选，请核对版本")
                     if !failed.isEmpty { self.lyricSearchSummary += " · \(failed) 暂时不可用" }
                     if self.lyricCandidates.isEmpty {
                         self.lyricStatus = result.failedSources.isEmpty ? "未匹配到歌词，可导入 LRC" : "部分歌词源不可用，可重试或导入 LRC"
@@ -376,7 +423,8 @@ final class SystemAppsStore: ObservableObject {
                             let candidate = LyricCandidate(id: "netease:" + id, source: "网易云歌词",
                                 title: title, artist: artist, album: self.musicAlbum, duration: duration,
                                 response: response, score: 160)
-                            self.addCandidates([candidate], key: key)
+                            self.lyricsSearching = false
+                            self.addCandidates([candidate], key: key, automatic: !manual)
                             self.lyricSearchSummary = "网易云歌词已匹配"
                         } else { externalSearch() }
                     }
@@ -385,7 +433,8 @@ final class SystemAppsStore: ObservableObject {
         } else { externalSearch() }
     }
 
-    private func addCandidates(_ candidates: [LyricCandidate], key: String) {
+    private func addCandidates(_ candidates: [LyricCandidate], key: String, automatic: Bool = true) {
+        guard key == lyricsTrackKey else { return }
         for candidate in candidates {
             if let index = lyricCandidates.firstIndex(where: { $0.id == candidate.id }) {
                 lyricCandidates[index] = candidate
@@ -398,10 +447,12 @@ final class SystemAppsStore: ObservableObject {
             return left == right ? $0.id < $1.id : left > right
         }
         let preferred = (UserDefaults.standard.dictionary(forKey: "notch.music.lyricSelections.v1")?[key] as? String)
-        let choice = preferred.flatMap { id in lyricCandidates.first { $0.id == id } }
-            ?? lyricCandidates.first { !$0.requiresConfirmation }
-        if let choice { applyLyrics(choice.response, source: choice.source); selectedLyricID = choice.id }
-        else if !lyricCandidates.isEmpty {
+        guard automatic else { return }
+        let choice = LyricCandidate.choose(lyricCandidates, preferred: preferred, current: selectedLyricID)
+        if let choice, choice.id != selectedLyricID {
+            applyLyrics(choice.response, source: choice.source); selectedLyricID = choice.id
+        }
+        else if selectedLyricID == nil && !lyricCandidates.isEmpty {
             selectedLyricID = nil
             timedLyrics = []
             plainLyrics = nil
@@ -415,12 +466,6 @@ final class SystemAppsStore: ObservableObject {
         var selections = UserDefaults.standard.dictionary(forKey: "notch.music.lyricSelections.v1") ?? [:]
         selections[key] = id
         UserDefaults.standard.set(selections, forKey: "notch.music.lyricSelections.v1")
-        if candidate.requiresConfirmation && candidate.source != "本地歌词" &&
-            candidate.artist.range(of: #"[;/、&，,]"#, options: .regularExpression) == nil {
-            var aliases = UserDefaults.standard.dictionary(forKey: "notch.music.artistAliases.v1") ?? [:]
-            aliases[LyricQuery.normalize(musicArtist)] = candidate.artist
-            UserDefaults.standard.set(aliases, forKey: "notch.music.artistAliases.v1")
-        }
         selectedLyricID = id
         applyLyrics(candidate.response, source: candidate.source)
     }
@@ -433,37 +478,47 @@ final class SystemAppsStore: ObservableObject {
         UserDefaults.standard.set(offsets, forKey: "notch.music.lyricOffsets.v1")
     }
 
-    func editLyricArtistName() {
-        guard musicAvailable else { return }
-        let artist = musicArtist
-        let alert = NSAlert()
-        alert.messageText = "歌词匹配歌手名"
-        alert.informativeText = "播放器显示：\(artist)\n设置用于查询歌词的歌手名，按歌手保存在本机。"
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        field.stringValue = LyricQuery.canonicalArtist(artist)
-        alert.accessoryView = field
-        alert.addButton(withTitle: "保存并重新查询")
-        alert.addButton(withTitle: "取消")
-        alert.addButton(withTitle: "恢复默认")
-        lyricInteractionChanged?(true)
-        defer { lyricInteractionChanged?(false) }
-        NSApp.activate(ignoringOtherApps: true)
-        alert.window.initialFirstResponder = field
-        let choice = alert.runModal()
-        var aliases = UserDefaults.standard.dictionary(forKey: "notch.music.artistAliases.v1") ?? [:]
-        let key = LyricQuery.normalize(artist)
-        if choice == .alertFirstButtonReturn {
-            let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !value.isEmpty else { return }
-            aliases[key] = value
-        } else if choice == .alertThirdButtonReturn { aliases.removeValue(forKey: key) }
-        else { return }
-        UserDefaults.standard.set(aliases, forKey: "notch.music.artistAliases.v1")
-        if musicArtist == artist {
-            lyricCandidates.removeAll { $0.source != "本地歌词" }
-            if selectedLyricID != "local" { selectedLyricID = nil; timedLyrics = []; plainLyrics = nil }
-            retryLyrics()
+    var lyricSearchQuery: LyricQuery {
+        let values = lyricsTrackKey.flatMap {
+            UserDefaults.standard.dictionary(forKey: "notch.music.searchOverrides.v1")?[$0] as? [String: String]
         }
+        return LyricQuery(title: values?["title"] ?? musicTitle,
+            artist: values?["artist"] ?? LyricQuery.canonicalArtist(musicArtist),
+            album: values?["album"] ?? musicAlbum, duration: musicDuration)
+    }
+
+    func searchLyrics(title: String, artist: String, album: String, key: String) {
+        guard key == lyricsTrackKey, musicAvailable else { return }
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        guard onlineLyricsEnabled || extraLyricsEnabled || neteaseLyricsEnabled || independentLyricsEnabled else {
+            lyricSearchSummary = "请先选择并开启一个联网歌词来源"
+            return
+        }
+        var overrides = UserDefaults.standard.dictionary(forKey: "notch.music.searchOverrides.v1") ?? [:]
+        overrides[key] = ["title": title, "artist": artist.trimmingCharacters(in: .whitespacesAndNewlines),
+                          "album": album.trimmingCharacters(in: .whitespacesAndNewlines)]
+        UserDefaults.standard.set(overrides, forKey: "notch.music.searchOverrides.v1")
+        lyricCandidates.removeAll { $0.id != selectedLyricID }
+        fetchLyrics(title: title, artist: artist, duration: musicDuration,
+                    bundle: currentPlayerBundle, key: key, album: album, manual: true)
+    }
+
+    func cancelLyricSearch() {
+        lyricSearchTask?.cancel()
+        lyricLookupKey = "cancelled-" + UUID().uuidString
+        lyricsSearching = false
+        lyricSearchSummary = "已取消查询，当前歌词保留"
+    }
+
+    func showLyricSearch() {
+        if lyricSearchWindow == nil {
+            lyricSearchWindow = LyricSearchWindowController(store: self)
+        }
+        if lyricSearchWindow?.window?.isVisible != true { lyricInteractionChanged?(true) }
+        lyricSearchWindow?.showWindow(nil)
+        lyricSearchWindow?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     func importLyrics() {
@@ -542,5 +597,158 @@ final class SystemAppsStore: ObservableObject {
         if let first = plainLyrics?.split(whereSeparator: \.isNewline).first,
            !first.isEmpty { return String(first) }
         return lyricStatus
+    }
+}
+
+final class LyricSearchWindowController: NSWindowController, NSWindowDelegate {
+    private weak var store: SystemAppsStore?
+    init(store: SystemAppsStore) {
+        self.store = store
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 660),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.title = "搜索与校正歌词"
+        window.minSize = NSSize(width: 580, height: 540)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: LyricSearchHost(store: store))
+        super.init(window: window)
+        window.delegate = self
+        window.center()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func windowWillClose(_ notification: Notification) { store?.lyricInteractionChanged?(false) }
+}
+
+struct LyricSearchHost: View {
+    @ObservedObject var store: SystemAppsStore
+    var body: some View {
+        Group {
+            if let key = store.lyricsTrackKey, store.musicAvailable {
+                LyricSearchView(store: store, key: key, query: store.lyricSearchQuery).id(key)
+            } else {
+                ContentUnavailableView("先播放一首歌曲", systemImage: "music.note",
+                    description: Text("播放后可按歌名、歌手和专辑寻找歌词。"))
+            }
+        }
+    }
+}
+
+struct LyricSearchView: View {
+    @ObservedObject var store: SystemAppsStore
+    let key: String
+    @State private var title: String
+    @State private var artist: String
+    @State private var album: String
+    @State private var previewID: String?
+    @FocusState private var titleFocused: Bool
+
+    init(store: SystemAppsStore, key: String, query: LyricQuery) {
+        self.store = store; self.key = key
+        _title = State(initialValue: query.title)
+        _artist = State(initialValue: query.artist)
+        _album = State(initialValue: query.album)
+    }
+    private var canSearch: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !store.lyricsSearching
+    }
+    private func search() {
+        guard canSearch else { return }
+        previewID = nil
+        store.searchLyrics(title: title, artist: artist, album: album, key: key)
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "text.magnifyingglass").font(.system(size: 26)).foregroundStyle(.indigo)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("找到这一首的歌词").font(.title3.bold())
+                    Text("播放器 · \(store.musicTitle) · \(store.musicArtist)")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+                Spacer()
+                Text(LyricCandidate.timeLabel(store.musicDuration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                Text("美区译名搜不到时，可填中文原名；修改仅记住本曲。").font(.caption).foregroundStyle(.secondary)
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                    GridRow { Text("歌名"); TextField("必填，可输入原名或译名", text: $title).focused($titleFocused) }
+                    GridRow { Text("歌手"); TextField("可校正英文艺名或合唱信息", text: $artist) }
+                    GridRow { Text("专辑"); TextField("选填，用于核对版本", text: $album) }
+                }.textFieldStyle(.roundedBorder).onSubmit { search() }
+                HStack {
+                    Button("填入播放器信息") {
+                        title = store.musicTitle; artist = store.musicArtist; album = store.musicAlbum
+                    }.buttonStyle(.link)
+                    Spacer()
+                    Button(action: search) { Label("搜索歌词", systemImage: "magnifyingglass") }
+                        .buttonStyle(.borderedProminent).disabled(!canSearch).keyboardShortcut(.return)
+                }
+            }.padding(14).background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+            HStack(spacing: 8) {
+                if store.lyricsSearching {
+                    ProgressView().controlSize(.small)
+                    Button("取消") { store.cancelLyricSearch() }.buttonStyle(.link)
+                }
+                Text(store.lyricSearchSummary.isEmpty ? "核对曲名、歌手和时长，再选择歌词" : store.lyricSearchSummary)
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Spacer()
+                Menu("来源") {
+                    Button("开启 QQ、酷狗、LRCLIB") { store.enableExtraLyrics() }
+                    Button("开启 LRCLIB") { store.enableOnlineLyrics() }
+                    Button("关闭联网查询") { store.disableOnlineLyrics() }
+                }.fixedSize()
+            }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if store.lyricCandidates.isEmpty {
+                        VStack(spacing: 8) {
+                            Image(systemName: store.lyricsSearching ? "waveform" : "text.quote").font(.title)
+                            Text(store.lyricsSearching ? "正在寻找候选歌词" : "暂无候选歌词")
+                            Text("试试原文歌名，或导入本地 LRC / TXT").font(.caption)
+                        }.foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 30)
+                    }
+                    ForEach(store.lyricCandidates) { candidate in
+                        candidateRow(candidate)
+                    }
+                }
+            }
+            HStack {
+                Text("搜索会向已开启的歌词源发送查询信息。").font(.caption2).foregroundStyle(.secondary)
+                Spacer()
+                Button("导入歌词…") { store.importLyrics() }
+            }
+        }.padding(22).frame(minWidth: 536, minHeight: 480)
+            .onAppear { titleFocused = true }
+    }
+    private func candidateRow(_ candidate: LyricCandidate) -> some View {
+        let selected = candidate.id == store.selectedLyricID
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(candidate.title).font(.headline).textSelection(.enabled)
+                    Text(candidate.artist + (candidate.album.isEmpty ? "" : " · " + candidate.album))
+                        .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+                Spacer(minLength: 10)
+                Button(selected ? "使用中" : "使用此歌词") { store.selectLyric(candidate.id) }
+                    .disabled(selected)
+            }
+            Text(candidate.evidence(against: store.lyricSearchQuery))
+                .font(.caption).foregroundStyle(candidate.requiresConfirmation ? .orange : .secondary)
+            HStack {
+                Text(candidate.source + " · " + (candidate.response.timed.isEmpty ? "静态歌词" : "逐行同步"))
+                    .font(.caption2).foregroundStyle(.secondary)
+                Spacer()
+                Button(previewID == candidate.id ? "收起预览" : "预览歌词") {
+                    previewID = previewID == candidate.id ? nil : candidate.id
+                }.buttonStyle(.link).font(.caption)
+            }
+            if previewID == candidate.id {
+                Text(candidate.response.timed.isEmpty ? String((candidate.response.plain ?? "").prefix(600)) :
+                    candidate.response.timed.prefix(8).map(\.text).joined(separator: "\n"))
+                    .font(.callout).lineSpacing(5).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }.padding(12).background(selected ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.035),
+                                    in: RoundedRectangle(cornerRadius: 10))
     }
 }

@@ -537,17 +537,23 @@ private struct GlassPill: View {
     }
 
     private var musicCompact: some View {
-        ViewThatFits(in: .horizontal) {
-            musicCompactFull.frame(minWidth: 420)
-            HStack(spacing: 5) {
-                Button { systemApps.setExpanded("music", true) } label: {
-                    Text(systemApps.musicTitle).font(.system(size: 11, weight: .medium))
-                        .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-                }.buttonStyle(.plain)
-                iconButton(systemApps.musicPlaying ? "pause.fill" : "play.fill", label: systemApps.musicPlaying ? "暂停播放" : "播放") {
-                    systemApps.musicCommand("toggle")
-                }
-                iconButton("chevron.down") { systemApps.setExpanded("music", true) }
+        GeometryReader { geometry in
+            // Choose only from the available space, never the current lyric's ideal width.
+            if MusicPresentation.usesFullCompact(width: geometry.size.width) {
+                musicCompactFull.frame(width: geometry.size.width, height: geometry.size.height)
+            } else {
+                HStack(spacing: 5) {
+                    Button { systemApps.setExpanded("music", true) } label: {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(systemApps.musicTitle).font(.system(size: 10, weight: .semibold))
+                            Text(systemApps.currentLyricText).font(.system(size: 10)).foregroundStyle(.secondary)
+                        }.lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                    }.buttonStyle(.plain)
+                    iconButton(systemApps.musicPlaying ? "pause.fill" : "play.fill", label: systemApps.musicPlaying ? "暂停播放" : "播放") {
+                        systemApps.musicCommand("toggle")
+                    }
+                    iconButton("chevron.down") { systemApps.setExpanded("music", true) }
+                }.frame(width: geometry.size.width, height: geometry.size.height)
             }
         }
     }
@@ -802,25 +808,28 @@ private struct GlassPill: View {
     }
 
     private var musicDetail: some View {
-        ViewThatFits(in: .horizontal) {
-            musicDetailFull.frame(minWidth: 440)
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text(systemApps.musicTitle).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                    Spacer(minLength: 2)
-                    iconButton("chevron.up") { systemApps.setExpanded("music", false) }
-                }
-                Text(systemApps.musicArtist).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                HStack {
-                    iconButton("backward.end.fill") { systemApps.musicCommand("previous") }
-                    iconButton(systemApps.musicPlaying ? "pause.fill" : "play.fill") { systemApps.musicCommand("toggle") }
-                    iconButton("forward.end.fill") { systemApps.musicCommand("next") }
-                    Spacer(minLength: 0)
-                    iconButton(interaction.isPinned("music") ? "pin.fill" : "pin") { togglePin() }
-                }
-                Text(systemApps.currentLyricText).font(.system(size: 11)).lineLimit(2)
-                lyricActions
-            }.padding(.vertical, 10)
+        GeometryReader { geometry in
+            if MusicPresentation.usesFullDetail(width: geometry.size.width) {
+                musicDetailFull.frame(width: geometry.size.width, height: geometry.size.height)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text(systemApps.musicTitle).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                        Spacer(minLength: 2)
+                        iconButton("chevron.up") { systemApps.setExpanded("music", false) }
+                    }
+                    Text(systemApps.musicArtist).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    HStack {
+                        iconButton("backward.end.fill") { systemApps.musicCommand("previous") }
+                        iconButton(systemApps.musicPlaying ? "pause.fill" : "play.fill") { systemApps.musicCommand("toggle") }
+                        iconButton("forward.end.fill") { systemApps.musicCommand("next") }
+                        Spacer(minLength: 0)
+                        iconButton(interaction.isPinned("music") ? "pin.fill" : "pin") { togglePin() }
+                    }
+                    Text(systemApps.currentLyricText).font(.system(size: 11)).lineLimit(2)
+                    lyricActions
+                }.padding(.vertical, 10).frame(width: geometry.size.width, height: geometry.size.height)
+            }
         }
     }
 
@@ -866,12 +875,9 @@ private struct GlassPill: View {
                 if let index = systemApps.currentLyricIndex {
                     Text(systemApps.timedLyrics[index].text)
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .lineLimit(2).frame(height: 36, alignment: .leading).id(index)
-                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 3)))
-                    if index + 1 < systemApps.timedLyrics.count {
-                        Text(systemApps.timedLyrics[index + 1].text)
-                            .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-                    }
+                        .lineLimit(2).frame(height: 36, alignment: .leading)
+                    Text(index + 1 < systemApps.timedLyrics.count ? systemApps.timedLyrics[index + 1].text : " ")
+                        .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).frame(height: 13)
                 } else {
                     Text(systemApps.currentLyricText)
                         .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
@@ -879,7 +885,7 @@ private struct GlassPill: View {
                 lyricActions
             }
         }.padding(.vertical, 8)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: systemApps.currentLyricIndex)
+
     }
 
     @ViewBuilder private var lyricActions: some View {
@@ -902,7 +908,7 @@ private struct GlassPill: View {
                 }
                 Divider()
                 if systemApps.lyricCandidates.contains(where: { $0.requiresConfirmation }) {
-                    Text("确认选择按歌曲保存，单一歌手会记住名字对应")
+                    Text("确认只用于本曲，不修改全局歌手别名")
                 }
                 ForEach(systemApps.lyricCandidates) { candidate in
                     Button((systemApps.selectedLyricID == candidate.id ? "✓ " : candidate.requiresConfirmation ? "确认匹配 · " : "") + candidate.label +
@@ -916,7 +922,7 @@ private struct GlassPill: View {
                 } else {
                     Button("开启艺名识别 · 仅歌手名发送至 MusicBrainz") { systemApps.setArtistLookup(true) }
                 }
-                Button("校正歌词匹配歌手名…") { systemApps.editLyricArtistName() }
+                Button("搜索与校正歌词…") { systemApps.showLyricSearch() }
                 Button("导入本地 LRC / TXT…") { systemApps.importLyrics() }
                 if !systemApps.lyricSearchSummary.isEmpty {
                     Text(systemApps.lyricSearchSummary)
@@ -925,6 +931,9 @@ private struct GlassPill: View {
                 Text(systemApps.lyricCandidates.isEmpty ? "歌词来源" : "\(systemApps.lyricSourceLabel) · \(systemApps.lyricCandidates.count) 个版本")
                     .font(.system(size: 9))
             }.menuStyle(.borderlessButton).fixedSize()
+            Button { systemApps.showLyricSearch() } label: {
+                Image(systemName: "magnifyingglass").font(.system(size: 11))
+            }.buttonStyle(.plain).help("搜索与校正歌词")
             Spacer(minLength: 0)
             if !systemApps.timedLyrics.isEmpty {
                 Menu {

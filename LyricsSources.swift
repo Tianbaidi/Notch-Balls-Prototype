@@ -12,10 +12,33 @@ struct LyricCandidate: Identifiable {
     var requiresConfirmation: Bool { score < 100 }
     var label: String {
         let record = album.isEmpty ? title : album
-        let seconds = Int(duration ?? 0)
+        let seconds = Int((duration?.isFinite == true && (duration ?? 0) < 604800) ? max(0, duration ?? 0) : 0)
         let length = seconds > 0 ? String(format: " · %d:%02d", seconds / 60, seconds % 60) : " · 时长未标注"
         return "\(source) · \(record) · \(artist)" + length
     }
+    static func choose(_ candidates: [LyricCandidate], preferred: String?, current: String?) -> LyricCandidate? {
+        preferred.flatMap { id in candidates.first { $0.id == id } }
+            ?? current.flatMap { id in candidates.first { $0.id == id } }
+            ?? candidates.first { !$0.requiresConfirmation }
+    }
+
+    static func timeLabel(_ duration: Double?) -> String {
+        guard let duration, duration.isFinite, duration > 0, duration < 604800 else { return "时长未标注" }
+        let seconds = Int(duration.rounded())
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    func evidence(against query: LyricQuery) -> String {
+        var labels = [Self.timeLabel(duration)]
+        if let duration, duration.isFinite, let target = query.duration, target.isFinite, duration > 0, target > 0 {
+            labels.append(String(format: "时长差 %+.1f 秒", duration - target))
+        }
+        labels.append(LyricQuery.normalize(LyricQuery.cleanTitle(title)) == LyricQuery.normalize(query.searchTitle) ? "曲名一致" : "曲名不同，核对译名")
+        labels.append(LyricQuery.artistEquivalent(artist, query.artist) ? "歌手一致" : "歌手待核对")
+        if requiresConfirmation { labels.append("需确认版本") }
+        return labels.joined(separator: " · ")
+    }
+
 }
 
 struct LyricQuery {
@@ -23,6 +46,7 @@ struct LyricQuery {
     let artist: String
     let album: String
     let duration: Double?
+    var translatedTitleSearch = false
 
     static func normalize(_ value: String) -> String {
         let simplified = value.applyingTransform(StringTransform("Traditional-Simplified"), reverse: false) ?? value
@@ -52,13 +76,14 @@ struct LyricQuery {
 
     static func artistEquivalent(_ lhs: String, _ rhs: String) -> Bool {
         let a = canonicalArtist(lhs), b = canonicalArtist(rhs)
-        if normalize(a) == normalize(b) { return true }
+        if !normalize(a).isEmpty && normalize(a) == normalize(b) { return true }
         func parts(_ name: String) -> [String] {
             let split = name.replacingOccurrences(of: #"(?i)\s+(?:feat\.?|ft\.?|featuring)\s+|[;/、&，,]|[\(（\)）]"#, with: "|", options: .regularExpression)
             return split.components(separatedBy: "|").map(normalize).filter { !$0.isEmpty }
         }
-        if !Set(parts(a)).isDisjoint(with: Set(parts(b))) { return true }
-        return false
+        let left = Set(parts(a).map { normalize(canonicalArtist($0)) })
+        let right = Set(parts(b).map { normalize(canonicalArtist($0)) })
+        return !left.isEmpty && left == right
     }
 
     static func artistPhoneticEquivalent(_ a: String, _ b: String) -> Bool {
@@ -70,26 +95,50 @@ struct LyricQuery {
         return ac != bc && !latin(a).isEmpty && latin(a) == latin(b)
     }
 
+    static func versionTags(_ title: String) -> Set<String> {
+        let text = (title.applyingTransform(StringTransform("Traditional-Simplified"), reverse: false) ?? title).lowercased()
+        let markers = ["live": #"\blive\b|现场|演唱会"#,
+                       "remix": #"\bremix\b|混音版"#,
+                       "acoustic": #"\bacoustic\b|不插电"#,
+                       "instrumental": #"\binstrumental\b|\bkaraoke\b|伴奏|纯音乐"#,
+                       "demo": #"\bdemo\b|小样"#,
+                       "cover": #"\bcover\b|翻唱"#,
+                       "speed": #"\bsped[ -]?up\b|\bslowed\b|加速版|慢速版"#]
+        return Set(markers.compactMap { text.range(of: $0.value, options: .regularExpression) == nil ? nil : $0.key })
+    }
+
     func score(title candidate: String, artist singer: String, album record: String,
                duration length: Double?, allowUncertain: Bool = false) -> Double? {
+        guard Self.versionTags(title) == Self.versionTags(candidate) else { return nil }
         let a = Self.normalize(Self.cleanTitle(title)), b = Self.normalize(Self.cleanTitle(candidate))
-        guard !a.isEmpty, a == b else { return nil }
+        guard !a.isEmpty, !b.isEmpty else { return nil }
+        let sameTitle = a == b
         let artistMatches = Self.artistEquivalent(artist, singer)
         let phoneticMatch = Self.artistPhoneticEquivalent(artist, singer)
-        let sameAlbum = !album.isEmpty && !record.isEmpty && Self.normalize(album) == Self.normalize(record)
+        let sameAlbum = !Self.normalize(album).isEmpty && Self.normalize(album) == Self.normalize(record)
         var difference: Double?
-        if let duration, duration > 0, let length, length > 0 {
+        if let duration, duration.isFinite, duration > 0,
+           let length, length.isFinite, length > 0 {
             difference = abs(duration - length)
             guard difference! <= 12 else { return nil }
         }
-        guard artistMatches || (allowUncertain && (difference != nil || sameAlbum || phoneticMatch)) else { return nil }
-        var result = artistMatches ? 100.0 : 35.0
-        if let difference { result += 30 - difference * 2 }
-        if sameAlbum { result += 15 }
-        if !artistMatches && phoneticMatch { result += 10 }
-
-        return result
+        if !sameTitle {
+            // A different title is a suggestion only: never infer a translation from duration alone.
+            guard translatedTitleSearch, artistMatches, let difference, difference <= 3 else { return nil }
+            return 65 + (sameAlbum ? 15 : 0) - difference
+        }
+        if artistMatches {
+            // A broad 12-second search window finds candidates, not proof of the same recording.
+            if let difference, difference <= 3 { return 130 - difference * 4 + (sameAlbum ? 8 : 0) }
+            if difference == nil && sameAlbum { return 105 }
+            return 80 + (sameAlbum ? 8 : 0) // Missing evidence or a different-length edition: ask.
+        }
+        guard allowUncertain && (difference != nil || sameAlbum || phoneticMatch) else { return nil }
+        // Album or pronunciation can rank a suggestion, never establish an artist's identity.
+        return min(89, 35 + (sameAlbum ? 15 : 0) + (phoneticMatch ? 10 : 0)
+                   + (difference.map { 24 - $0 } ?? 0))
     }
+
 }
 
 struct LyricSearchResults {
@@ -98,8 +147,9 @@ struct LyricSearchResults {
 }
 
 enum MultiLyricsService {
+    @discardableResult
     static func fetch(query: LyricQuery, includeExtraSources: Bool, includeIndependentSource: Bool = false, includeLRCLIB: Bool = true, includeArtistLookup: Bool = false,
-                      completion: @escaping (LyricSearchResults) -> Void) {
+                      completion: @escaping (LyricSearchResults) -> Void) -> Task<Void, Never> {
         Task {
             var result = await primary(query, extras: includeExtraSources, lrclib: includeLRCLIB, broad: false)
             if !result.candidates.contains(where: { !$0.requiresConfirmation }) {
@@ -121,10 +171,18 @@ enum MultiLyricsService {
                     result = merge([result, broader])
                 }
             }
+            if !result.candidates.contains(where: { !$0.requiresConfirmation }),
+               !query.searchArtist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               query.artist != "未知歌手", let duration = query.duration, duration.isFinite, duration > 0 {
+                var translated = query
+                translated.translatedTitleSearch = true
+                result = merge([result, await primary(translated, extras: includeExtraSources, lrclib: includeLRCLIB, broad: true)])
+            }
             if !result.candidates.contains(where: { !$0.requiresConfirmation }) && includeIndependentSource {
                 let fallback = await checked("VV 歌词") { try await searchVV(query) }
                 result = merge([result, fallback])
             }
+            guard !Task.isCancelled else { return }
             completion(result)
         }
     }
@@ -140,7 +198,10 @@ enum MultiLyricsService {
     }
 
     private static func checked(_ source: String, operation: () async throws -> [LyricCandidate]) async -> LyricSearchResults {
-        do { return LyricSearchResults(candidates: try await operation(), failedSources: []) }
+        do {
+            try Task.checkCancellation()
+            return LyricSearchResults(candidates: try await operation(), failedSources: [])
+        }
         catch { return LyricSearchResults(candidates: [], failedSources: [source]) }
     }
 
@@ -158,6 +219,7 @@ enum MultiLyricsService {
     }
 
     private static func json(_ base: String, _ parameters: [String: String], referer: String? = nil) async throws -> Any {
+        try Task.checkCancellation()
         var components = URLComponents(string: base)!
         components.queryItems = parameters.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
         var request = URLRequest(url: components.url!)
@@ -183,8 +245,17 @@ enum MultiLyricsService {
     }
 
     private static func searchLRCLIB(_ query: LyricQuery, broad: Bool = false) async throws -> [LyricCandidate] {
-        guard let records = try await json("https://lrclib.net/api/search", (broad ? ["track_name": query.searchTitle] : ["track_name": query.searchTitle, "artist_name": query.searchArtist])) as? [[String: Any]] else {
+        var parameters = broad ? ["track_name": query.searchTitle] : ["track_name": query.searchTitle, "artist_name": query.searchArtist]
+        if query.translatedTitleSearch {
+            parameters = ["artist_name": query.searchArtist]
+            if !query.album.isEmpty { parameters["album_name"] = query.album }
+        }
+        guard var records = try await json("https://lrclib.net/api/search", parameters) as? [[String: Any]] else {
             throw NSError(domain: "LRCLIB", code: 1)
+        }
+        if records.isEmpty && query.translatedTitleSearch && parameters["album_name"] != nil {
+            // Storefront album names can be translated too; make one bounded artist-only retry.
+            records = (try await json("https://lrclib.net/api/search", ["artist_name": query.searchArtist]) as? [[String: Any]]) ?? []
         }
         return records.compactMap { row in
             make(id: String(describing: row["id"] ?? ""), source: "LRCLIB",
@@ -196,7 +267,7 @@ enum MultiLyricsService {
 
     private static func searchQQ(_ query: LyricQuery, broad: Bool = false) async throws -> [LyricCandidate] {
         guard let body = try await json("https://c.y.qq.com/soso/fcgi-bin/client_search_cp",
-            ["w": broad ? query.searchTitle : query.searchTitle + " " + query.searchArtist, "format": "json", "p": "1", "n": broad ? "30" : "8"]) as? [String: Any],
+            ["w": query.translatedTitleSearch ? query.searchArtist : (broad ? query.searchTitle : query.searchTitle + " " + query.searchArtist), "format": "json", "p": "1", "n": broad ? "30" : "8"]) as? [String: Any],
               (body["code"] as? Int) == 0,
               let data = body["data"] as? [String: Any], let song = data["song"] as? [String: Any],
               let rows = song["list"] as? [[String: Any]] else { throw NSError(domain: "QQ", code: 1) }
@@ -222,7 +293,7 @@ enum MultiLyricsService {
 
     private static func searchKugou(_ query: LyricQuery, broad: Bool = false) async throws -> [LyricCandidate] {
         guard let body = try await json("https://lyrics.kugou.com/search",
-            ["keyword": broad ? query.searchTitle : query.searchTitle + " " + query.searchArtist, "duration": String(Int((query.duration ?? 0) * 1000)),
+            ["keyword": query.translatedTitleSearch ? query.searchArtist : (broad ? query.searchTitle : query.searchTitle + " " + query.searchArtist), "duration": String(Int((query.duration.flatMap { $0.isFinite && $0 > 0 && $0 < 604800 ? $0 : nil } ?? 0) * 1000)),
              "client": "pc", "ver": "1", "man": "yes"]) as? [String: Any],
               (body["status"] as? Int) == 200, let rows = body["candidates"] as? [[String: Any]] else {
             throw NSError(domain: "Kugou", code: 1)

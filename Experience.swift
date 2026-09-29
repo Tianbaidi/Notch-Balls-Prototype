@@ -97,3 +97,9 @@ final class CapsuleAnimator {
         RunLoop.main.add(timer, forMode: .common)
     }
 }
+
+/// Stable layout decisions must depend on container size, never changing text.
+enum MusicPresentation {
+    static func usesFullCompact(width: CGFloat) -> Bool { width >= 420 }
+    static func usesFullDetail(width: CGFloat) -> Bool { width >= 440 }
+}
