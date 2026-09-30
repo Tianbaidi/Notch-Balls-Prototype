@@ -21,6 +21,11 @@
       "detail": "系统正在播放与歌词"
     },
     {
+      "id": "timeline",
+      "title": "时间轴",
+      "detail": "日、月、年进度与日历事件"
+    },
+    {
       "id": "pomodoro",
       "title": "番茄钟",
       "detail": "专注、休息与统计"

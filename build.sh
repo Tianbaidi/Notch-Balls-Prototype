@@ -63,7 +63,7 @@ trap 'rm -f "$NB_INFO_PATH"; rm -rf "$NB_BUILD_DIR"' EXIT
 APP="$NB_BUILD_DIR/Notch Balls Prototype.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 python3 generate_noise.py
-CLANG_MODULE_CACHE_PATH=/private/tmp/notch-balls-clang-cache SWIFT_MODULE_CACHE_PATH=/private/tmp/notch-balls-swift-cache xcrun swiftc -target arm64-apple-macosx14.0 -O main.swift Experience.swift Pomodoro.swift FocusStats.swift SystemApps.swift NowPlaying.swift LyricsSources.swift ArtistAliases.swift DockPlacement.swift -o "$APP/Contents/MacOS/NotchBalls" -F vendor -framework Sparkle -framework AppKit -framework AVFoundation -lsqlite3 -Xlinker -rpath -Xlinker '@executable_path/../Frameworks'
+CLANG_MODULE_CACHE_PATH=/private/tmp/notch-balls-clang-cache SWIFT_MODULE_CACHE_PATH=/private/tmp/notch-balls-swift-cache xcrun swiftc -target arm64-apple-macosx14.0 -O main.swift Timeline.swift Experience.swift Pomodoro.swift FocusStats.swift SystemApps.swift NowPlaying.swift LyricsSources.swift ArtistAliases.swift DockPlacement.swift -o "$APP/Contents/MacOS/NotchBalls" -F vendor -framework Sparkle -framework AppKit -framework AVFoundation -lsqlite3 -Xlinker -rpath -Xlinker '@executable_path/../Frameworks'
 cp "$NB_INFO_PATH" "$APP/Contents/Info.plist"
 ditto vendor/Sparkle.framework "$APP/Contents/Frameworks/Sparkle.framework"
 cp scene.json now-playing.jxa white-noise.wav deep-noise.wav audio/rain.wav audio/ocean.wav audio/stream.wav "$APP/Contents/Resources/"

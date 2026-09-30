@@ -7,6 +7,7 @@ let scratchDefaults = UserDefaults(suiteName: previewSuite)!
 let previewStore = ModuleStore()
 let previewSystem = SystemAppsStore()
 let previewPomodoro = PomodoroModel(defaults: scratchDefaults, phaseCue: { _ in })
+let previewTimeline = TimelineStore(defaults: scratchDefaults, startTimer: false)
 let previewInteraction = CapsuleInteraction(defaults: scratchDefaults)
 previewInteraction.controlsArmed = true
 extension ModuleStore { func loadPreview() {
@@ -41,7 +42,8 @@ previewSystem.loadPreview()
 
 let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
 try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-func render<V: View>(_ view: V, name: String, size: CGSize, dark: Bool = false) {
+func render<V: View>(_ view: V, name: String, size: CGSize, dark: Bool = false,
+                     settle: TimeInterval = 0.25) {
     let root = view.environment(\.colorScheme, dark ? .dark : .light)
         .frame(width: size.width, height: size.height)
         .padding(24)
@@ -53,7 +55,7 @@ func render<V: View>(_ view: V, name: String, size: CGSize, dark: Bool = false) 
     window.contentView = host
     host.frame = rect
     window.orderFront(nil)
-    RunLoop.main.run(until: Date().addingTimeInterval(0.25))
+    RunLoop.main.run(until: Date().addingTimeInterval(settle))
     host.layoutSubtreeIfNeeded()
     host.display()
     guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { fatalError("Bitmap unavailable") }
@@ -64,8 +66,51 @@ func render<V: View>(_ view: V, name: String, size: CGSize, dark: Bool = false) 
 }
 func pill(_ id: String) -> some View {
     GlassPill(module: SceneConfig.fallback.modules.first { $0.id == id }!, store: previewStore,
-              systemApps: previewSystem, pomodoro: previewPomodoro, interaction: previewInteraction, onClose: {})
+              systemApps: previewSystem, pomodoro: previewPomodoro, timeline: previewTimeline,
+              interaction: previewInteraction, onClose: {})
 }
+let previewCalendar = Calendar.current
+let previewNow = Date()
+let previewDay = previewCalendar.startOfDay(for: previewNow)
+func sample(_ id: String, _ title: String, day: Int, hour: Int, duration: Int, calendar: String) -> TimelineEvent {
+    let start = previewCalendar.date(byAdding: .hour, value: hour,
+        to: previewCalendar.date(byAdding: .day, value: day, to: previewDay)!)!
+    return TimelineEvent(id: id, title: title, start: start,
+        end: previewCalendar.date(byAdding: .minute, value: duration, to: start)!,
+        isAllDay: false, calendarID: calendar, calendarTitle: calendar,
+        externalID: nil, url: nil)
+}
+previewTimeline.open(pinned: false)
+previewTimeline.loadPreview([
+    sample("work-1", "项目讨论", day: 0, hour: 9, duration: 90, calendar: "工作"),
+    sample("personal-1", "午间散步", day: 0, hour: 12, duration: 40, calendar: "个人"),
+    sample("family-1", "家庭晚餐", day: 0, hour: 18, duration: 120, calendar: "家庭"),
+    sample("work-2", "交付节点", day: 2, hour: 10, duration: 60, calendar: "工作"),
+    sample("trip", "短途旅行", day: 7, hour: 8, duration: 60 * 72, calendar: "个人")
+])
+render(pill("timeline"), name: "timeline-day", size: CGSize(width: 520, height: 96), dark: true, settle: 1.1)
+previewTimeline.setLevel(2)
+render(pill("timeline"), name: "timeline-month", size: CGSize(width: 520, height: 156), dark: true, settle: 1.1)
+previewTimeline.setLevel(3)
+render(pill("timeline"), name: "timeline-year", size: CGSize(width: 520, height: 216), dark: true, settle: 1.1)
+previewTimeline.loadPreview((0..<14).map { index in
+    sample("dense-\(index)", "重叠事件 \(index + 1)", day: 0,
+           hour: 9 + index / 4, duration: 55, calendar: ["工作", "个人", "家庭"][index % 3])
+})
+render(pill("timeline"), name: "timeline-dense", size: CGSize(width: 520, height: 216), dark: true, settle: 1.1)
+var eastern = Calendar(identifier: .gregorian)
+eastern.timeZone = TimeZone(identifier: "America/New_York")!
+let spring = eastern.date(from: DateComponents(year: 2024, month: 3, day: 10, hour: 12))!
+let autumn = eastern.date(from: DateComponents(year: 2024, month: 11, day: 3, hour: 12))!
+let leap = eastern.date(from: DateComponents(year: 2024, month: 2, day: 15))!
+assert(TimelineScale.day.interval(at: spring, calendar: eastern).duration == 23 * 3600)
+assert(TimelineScale.day.interval(at: autumn, calendar: eastern).duration == 25 * 3600)
+assert(TimelineScale.month.interval(at: leap, calendar: eastern).duration == 29 * 86400)
+previewTimeline.setLevel(1)
+previewTimeline.setLevel(3)
+previewTimeline.setLevel(2)
+assert(previewTimeline.level == 2)
+print("PASS: timeline daylight saving, leap month and rapid level changes")
 previewPomodoro.setExpanded(true)
 render(pill("pomodoro"), name: "focus-idle-light", size: CGSize(width: 354, height: 460))
 previewPomodoro.loadActivePreview()
@@ -117,7 +162,8 @@ let testConfig = SceneConfig(ballDiameter: 22, spacing: 12, emergeDuration: 0.32
     collapseDelay: 0.7, maxColumns: 7, modules: [
         Module(id: "demo-a", title: "A", detail: ""), Module(id: "demo-b", title: "B", detail: "")])
 let testBalls = BallView(frame: CGRect(x: 0, y: 0, width: 640, height: 540),
-    config: testConfig, store: previewStore, systemApps: previewSystem, pomodoro: previewPomodoro)
+    config: testConfig, store: previewStore, systemApps: previewSystem,
+    pomodoro: previewPomodoro, timeline: previewTimeline)
 testBalls.reveal = 1
 testBalls.selected = 0
 testBalls.selected = 1

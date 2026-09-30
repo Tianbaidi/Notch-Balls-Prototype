@@ -24,6 +24,7 @@ struct SceneConfig: Codable {
             Module(id: "reminders", title: "提醒事项", detail: "查看、新增和完成提醒事项"),
             Module(id: "notes", title: "便笺", detail: "查看和新建 Apple 备忘录"),
             Module(id: "music", title: "音乐", detail: "系统正在播放与歌词"),
+            Module(id: "timeline", title: "时间轴", detail: "日、月、年进度与日历事件"),
             Module(id: "pomodoro", title: "番茄钟", detail: "专注、休息与统计")
         ]
     )
@@ -388,6 +389,7 @@ private struct GlassPill: View {
     @ObservedObject var store: ModuleStore
     @ObservedObject var systemApps: SystemAppsStore
     @ObservedObject var pomodoro: PomodoroModel
+    @ObservedObject var timeline: TimelineStore
     @ObservedObject var interaction: CapsuleInteraction
     let onClose: () -> Void
 
@@ -406,6 +408,7 @@ private struct GlassPill: View {
             || (module.id == "notes" && systemApps.notesExpanded)
             || (module.id == "music" && systemApps.musicExpanded)
             || ((module.id == "pomodoro" || module.id == "timer") && pomodoro.expanded)
+            || module.id == "timeline"
         let corner: CGFloat = detailOpen ? 22 : 18
         ZStack {
             if reduceTransparency {
@@ -435,6 +438,7 @@ private struct GlassPill: View {
         }
         .overlay {
             IridescentRim(corner: corner, passive: clearPassThrough)
+                .opacity(module.id == "timeline" ? 0.35 : 1)
         }
         .contentShape(RoundedRectangle(cornerRadius: corner))
         .animation(.easeOut(duration: 0.22), value: clearPassThrough)
@@ -443,6 +447,7 @@ private struct GlassPill: View {
         .animation(detailAnimation, value: systemApps.notesExpanded)
         .animation(detailAnimation, value: systemApps.musicExpanded)
         .animation(detailAnimation, value: pomodoro.expanded)
+        .animation(detailAnimation, value: timeline.level)
     }
 
     @ViewBuilder private var content: some View {
@@ -454,6 +459,8 @@ private struct GlassPill: View {
             musicDetail
         } else if (module.id == "pomodoro" || module.id == "timer") && pomodoro.expanded {
             pomodoroDetail
+        } else if module.id == "timeline" {
+            TimelineCapsule(store: timeline, interaction: interaction, onClose: onClose)
         } else {
         HStack(spacing: 8) {
             if module.id == "pomodoro" || module.id == "timer" {
@@ -1080,6 +1087,7 @@ final class BallView: NSView {
     let store: ModuleStore
     let systemApps: SystemAppsStore
     let pomodoro: PomodoroModel
+    let timeline: TimelineStore
     let interaction = CapsuleInteraction()
     var lockedCapsule: Bool {
         guard let selected else { return false }
@@ -1108,11 +1116,12 @@ final class BallView: NSView {
 
     init(frame: NSRect, config: SceneConfig, store: ModuleStore,
          systemApps: SystemAppsStore,
-         pomodoro: PomodoroModel) {
+         pomodoro: PomodoroModel, timeline: TimelineStore) {
         self.config = config
         self.store = store
         self.systemApps = systemApps
         self.pomodoro = pomodoro
+        self.timeline = timeline
         super.init(frame: frame)
         wantsLayer = true
         store.reminderExpansionChanged = { [weak self] expanded in
@@ -1123,6 +1132,9 @@ final class BallView: NSView {
         }
         pomodoro.expansionChanged = { [weak self] expanded in
             self?.animateDetail(expanded, extra: 424)
+        }
+        timeline.expansionChanged = { [weak self] level in
+            self?.animateDetail(true, extra: TimelineDesign.headerHeight + CGFloat(level) * TimelineDesign.rowHeight - 36)
         }
         for module in config.modules {
             let host = PassiveHostingView(rootView: GlassOrb(moduleID: module.id))
@@ -1200,7 +1212,8 @@ final class BallView: NSView {
         let gap: CGFloat = 12
         let desiredPillWidth: CGFloat = config.modules[selectedIndex].id == "music"
             ? 464 + min(1, detailExtra / 148) * 64
-            : (config.modules[selectedIndex].id == "pomodoro" || config.modules[selectedIndex].id == "timer" ? 354 : 310)
+            : (config.modules[selectedIndex].id == "timeline" ? TimelineDesign.width
+               : (config.modules[selectedIndex].id == "pomodoro" || config.modules[selectedIndex].id == "timer" ? 354 : 310))
         let leftGap = leftCount > 0 ? gap : 0
         let rightGap = rightCount > 0 ? gap : 0
         let availablePillWidth = bounds.width - CGFloat(leftCount + rightCount) * satelliteStep - leftGap - rightGap - 32
@@ -1278,8 +1291,13 @@ final class BallView: NSView {
         systemApps.setExpanded("music", false)
         systemApps.setMusicVisible(selected.map { config.modules[$0].id == "music" } ?? false)
         pomodoro.setExpanded(false)
+        timeline.hide()
+        if selected.map({ config.modules[$0].id == "timeline" }) == true {
+            timeline.open(pinned: interaction.isPinned("timeline"))
+        }
         detailAnimator.cancel()
-        detailExtra = selected == nil ? previousExtra : 0
+        detailExtra = selected == nil ? previousExtra :
+            (config.modules[selected!].id == "timeline" ? TimelineDesign.headerHeight + CGFloat(timeline.level) * TimelineDesign.rowHeight - 36 : 0)
         heightChanged?(desiredHeight)
         if let selected {
             if selectionOrigin != nil { pillProgress = 0 }
@@ -1290,7 +1308,7 @@ final class BallView: NSView {
             if module.id == "notes" { systemApps.openNotes() }
             if module.id == "music" { systemApps.openMusic() }
             let host = InteractiveHostingView(rootView: GlassPill(
-                module: module, store: store, systemApps: systemApps, pomodoro: pomodoro,
+                module: module, store: store, systemApps: systemApps, pomodoro: pomodoro, timeline: timeline,
                 interaction: interaction, onClose: { [weak self] in
                     guard let self else { return }
                     self.interaction.setPinned(module.id, false)
@@ -1392,6 +1410,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let moduleStore = ModuleStore()
     private let systemApps = SystemAppsStore()
     private let pomodoro = PomodoroModel()
+    private var timeline: TimelineStore!
     private var trigger: NSPanel!
     private var overlay: NSPanel!
     private var balls: BallView!
@@ -1426,6 +1445,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var positionItems: [NSMenuItem] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        timeline = TimelineStore()
         NSApp.setActivationPolicy(.accessory)
         if let feed = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String,
            let url = URL(string: feed), url.scheme == "https", url.host != nil,
@@ -1450,7 +1470,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         balls = BallView(frame: CGRect(x: 0, y: 0, width: width, height: 200),
                          config: config, store: moduleStore, systemApps: systemApps,
-                         pomodoro: pomodoro)
+                         pomodoro: pomodoro, timeline: timeline)
         overlay = makePanel(frame: CGRect(x: x, y: top - balls.desiredHeight,
                                           width: width, height: balls.desiredHeight))
         overlay.contentView = balls
@@ -1499,6 +1519,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "打开提醒事项列表", action: #selector(showReminders), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "打开便笺", action: #selector(showNotes), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "打开正在播放", action: #selector(showMusic), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "打开时间轴", action: #selector(showTimeline), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "打开番茄钟", action: #selector(showPomodoro), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "打开专注统计", action: #selector(showStatistics), keyEquivalent: ""))
         statsMenuItem = NSMenuItem(title: "今日专注 0 次 · 0 分钟", action: nil, keyEquivalent: "")
@@ -1808,6 +1829,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.systemApps.setExpanded("music", true)
         }
+    }
+    @objc private func showTimeline() {
+        guard let index = config.modules.firstIndex(where: { $0.id == "timeline" }) else { return }
+        showBalls()
+        balls.selected = index
     }
     @objc private func showPomodoro() {
         guard let index = config.modules.firstIndex(where: {

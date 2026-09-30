@@ -7,7 +7,7 @@ import tempfile
 root = Path(__file__).resolve().parent.parent
 output = root / 'build/ui-previews'
 output.mkdir(parents=True, exist_ok=True)
-files = ['Experience.swift', 'Pomodoro.swift', 'FocusStats.swift', 'SystemApps.swift',
+files = ['Timeline.swift', 'Experience.swift', 'Pomodoro.swift', 'FocusStats.swift', 'SystemApps.swift',
          'NowPlaying.swift', 'LyricsSources.swift', 'ArtistAliases.swift', 'DockPlacement.swift']
 source = '\n'.join((root / name).read_text() for name in files)
 source += '\n' + (root / 'main.swift').read_text().split('\nlet app = NSApplication.shared')[0]

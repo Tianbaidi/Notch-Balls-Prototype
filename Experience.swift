@@ -8,6 +8,7 @@ enum CapsuleTheme {
         case "reminders": return Color(red: 0.36, green: 0.64, blue: 1)
         case "notes": return Color(red: 0.96, green: 0.71, blue: 0.30)
         case "music": return Color(red: 0.77, green: 0.49, blue: 0.93)
+        case "timeline": return Color(red: 0.39, green: 0.68, blue: 0.86)
         default: return Color(red: 0.33, green: 0.76, blue: 0.65)
         }
     }
@@ -16,6 +17,7 @@ enum CapsuleTheme {
         case "reminders": return "checklist"
         case "notes": return "note.text"
         case "music": return "music.note"
+        case "timeline": return "timeline.selection"
         default: return "timer"
         }
     }

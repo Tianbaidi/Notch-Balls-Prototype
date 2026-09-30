@@ -14,6 +14,8 @@
   <string>在刘海胶囊中查看、新增和完成你的提醒事项。</string>
   <key>NSRemindersUsageDescription</key>
   <string>在刘海胶囊中查看、新增和完成你的提醒事项。</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>在时间轴中显示你选择的日历事件，仅在本机读取。</string>
   <key>NSAppleEventsUsageDescription</key>
-  <string>在刘海胶囊中查看和新建 Apple 备忘录。</string>
+  <string>在刘海胶囊中查看和新建 Apple 备忘录，并在日历中定位选中的事件。</string>
 </dict></plist>
