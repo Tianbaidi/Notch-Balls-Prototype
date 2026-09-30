@@ -2,6 +2,29 @@
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
   <channel>
     <item>
+      <title>Notch Balls Prototype 0.39 — 未公证测试版 / Unnotarized test</title>
+      <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.39</link>
+      <sparkle:version>39</sparkle:version>
+      <sparkle:shortVersionString>0.39</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <sparkle:minimumAutoupdateVersion>39</sparkle:minimumAutoupdateVersion>
+      <pubDate>Wed, 30 Sep 2026 15:54:58 +0000</pubDate>
+      <description sparkle:format="plain-text">未公证测试版（Unnotarized test build）。仅用于现有安装的更新验证，不是正式公开版；未通过 Developer ID 签名或 Apple 公证。
+
+0.39 · 时间轴与连贯动效
+
+- 新增时间轴小球：点击展开今天，继续展开本月、今年，可固定层级。
+- 首次打开自动请求日历权限；授权后立即刷新，无须重启。可选择日历与事件颜色。
+- 小球轻压后展开，轨道向下生长并轻微回弹；收起先淡出再回缩。
+- 分层渐变填色，扫光带入事件颜色与少量粒子，到达当前时间后收尾。
+- 事件悬停轻抬，详情贴近色块；重叠事件支持列表与详情切换，阅读时保持展开。
+- 静置和固定时减弱流动，粒子仅入场出现；减少动态效果与低电量模式下停止装饰动画。
+
+本版本使用临时代码签名与 Sparkle Ed25519 签名，未经 Developer ID 签名或 Apple 公证，不是正式公开版。</description>
+      <enclosure url="https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/download/v0.39/Notch-Balls-Prototype-0.39-macOS-arm64.zip" length="8277876" type="application/octet-stream" sparkle:edSignature="ht76XUzvBP0v+ZXzGraFokRxjGusv9X82URClSn66jQMvWiwFd8RQFYPt7ywCS0wM9jl9jAY8686d8fLRKXHAQ==" />
+    </item>
+    <item>
       <title>Notch Balls Prototype 0.38 — 未公证测试版 / Unnotarized test</title>
       <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.38</link>
       <sparkle:version>38</sparkle:version>
