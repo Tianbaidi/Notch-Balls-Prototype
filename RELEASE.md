@@ -26,6 +26,7 @@ python3 scripts/release.py prepare --version 0.36 --build 36 --mode testing --no
 ```
 
 输出到被忽略的 `dist/v0.36/`：ZIP、SHA256SUMS、manifest.json、候选 appcast、发布说明。
+发布构建输出到忽略的 `build/Notch Balls Prototype Preview.app`，不覆盖根目录正在运行的应用。
 构建只装入源码声明的应用资源，使用干净的临时目录；Sparkle 组件逐层签名。
 ZIP 用 ditto 保留 framework 符号链接；签名之后不再改变 ZIP。
 签名会用应用的公钥独立验证，再解包检查 bundle ID、版本、更新地址、代码签名。
@@ -50,6 +51,11 @@ git pull --ff-only origin main
 远端清单并发变化会停止；不要强推或盲目覆盖，先同步、复核并重新准备新版本。
 GitHub raw CDN 可能仍返回旧清单；等待缓存更新后重跑 verify-live，测试应用用真实地址。
 0.35 的已有草稿不参与本流程，不自动公开或删除。
+
+若由用户自行进行下载和安装验证，可使用 `publish --metadata-only dist/v0.39/manifest.json`。
+此模式核对 GitHub 附件 SHA-256、大小、上传状态及匿名 HEAD 可达性，不下载附件；
+本地 ZIP 签名验证仍执行。此时不要运行会下载包的 `verify-live`，只读取线上 appcast 核对版本与签名字段。
+这不等同于完成 Sparkle 下载、安装的端到端实测。
 
 ## 将来的正式版本
 

@@ -137,7 +137,7 @@ def prepare(args):
         notes = ('未公证测试版（Unnotarized test build）。仅用于现有安装的更新验证，'
                  '不是正式公开版；未通过 Developer ID 签名或 Apple 公证。\n\n' + notes)
     env = dict(os.environ, APP_VERSION=args.version, APP_BUILD=args.build,
-               RELEASE_MODE=args.mode, ENABLE_UPDATES='1', CODE_SIGN_IDENTITY=identity)
+               RELEASE_MODE=args.mode, ENABLE_UPDATES='1', CODE_SIGN_IDENTITY=identity, BUILD_PREVIEW='1')
     # Environment overrides may not silently redirect a release to a different key/feed.
     env.pop('SU_FEED_URL', None)
     env.pop('SU_PUBLIC_ED_KEY', None)
@@ -145,7 +145,7 @@ def prepare(args):
     with tempfile.TemporaryDirectory(prefix='notch-package-') as temp:
         stage = Path(temp)
         app = stage / APP
-        run('ditto', ROOT / APP, app)
+        run('ditto', ROOT / 'build' / 'Notch Balls Prototype Preview.app', app)
         if args.mode == 'stable':
             submission = stage / 'notarize.zip'
             run('ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', app, submission)
@@ -184,6 +184,12 @@ def release_state(tag):
 def remote_feed():
     data = gh_json('api', f'repos/{REPO}/contents/appcast.xml?ref=main')
     return data, base64.b64decode(data['content'])
+
+def verify_asset_metadata(asset, path):
+    require(asset.get('state') == 'uploaded', 'Remote asset upload incomplete')
+    require(asset.get('size') == path.stat().st_size, 'Remote asset size mismatch')
+    require(asset.get('digest') == 'sha256:' + digest(path), 'Remote asset SHA-256 missing or mismatched')
+
 
 def publish(args):
     m = json.loads(args.manifest.read_text())
@@ -232,6 +238,8 @@ def publish(args):
         if asset is None:
             require(release['draft'], 'Published release is missing an expected asset; refuse to modify')
             run('gh', 'release', 'upload', m['tag'], str(directory / name), '-R', REPO)
+        elif args.metadata_only:
+            verify_asset_metadata(asset, directory / name)
         else:
             with tempfile.TemporaryDirectory(prefix='notch-remote-') as temp:
                 run('gh', 'release', 'download', m['tag'], '-R', REPO, '--pattern', name, '--dir', temp)
@@ -239,11 +247,22 @@ def publish(args):
     if release['draft']:
         run('gh', 'release', 'edit', m['tag'], '-R', REPO, '--draft=false',
             '--prerelease' if m['mode'] == 'testing' else '--prerelease=false', '--latest=false')
-    # Crucial ordering: prove anonymous download + correct bytes before advertising the update.
-    with tempfile.TemporaryDirectory(prefix='notch-public-') as temp:
-        downloaded = Path(temp) / m['asset']
-        public_download(m['url'], downloaded)
-        verify_archive(downloaded, m)
+    # Verify availability before advertising. Optional metadata mode never downloads the package.
+    if args.metadata_only:
+        published = release_state(m['tag'])
+        require(published is not None and not published['draft'], 'Release is not public')
+        for name in (m['asset'], 'SHA256SUMS'):
+            asset = next((a for a in published['assets'] if a['name'] == name), None)
+            require(asset is not None, 'Published asset missing')
+            verify_asset_metadata(asset, directory / name)
+        run('curl', '-q', '--fail', '--head', '--location', '--retry', '3', '--max-time', '60',
+            '--proto', '=https', '--proto-redir', '=https', '--silent', '--show-error',
+            '--output', os.devnull, m['url'])
+    else:
+        with tempfile.TemporaryDirectory(prefix='notch-public-') as temp:
+            downloaded = Path(temp) / m['asset']
+            public_download(m['url'], downloaded)
+            verify_archive(downloaded, m)
     if not already_live:
         payload = dict(message=f"Publish {m['version']} {m['mode']} Sparkle update", branch='main',
                        sha=content['sha'], content=base64.b64encode(candidate).decode())
@@ -286,6 +305,8 @@ def main():
     p.set_defaults(func=prepare)
     p = sub.add_parser('publish', help='Resume upload/publish, then update main appcast via compare-and-swap')
     p.add_argument('manifest', type=Path)
+    p.add_argument('--metadata-only', action='store_true',
+                   help='Verify GitHub SHA-256/size and anonymous HEAD without downloading assets')
     p.set_defaults(func=publish)
     p = sub.add_parser('verify-live', help='Anonymous verification of the actual installed feed URL')
     p.add_argument('--build')

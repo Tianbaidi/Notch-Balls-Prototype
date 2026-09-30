@@ -425,6 +425,7 @@ private struct GlassPill: View {
                 }
             }
             content.padding(.horizontal, detailOpen ? 16 : 10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: module.id == "timeline" ? .topLeading : .center)
                 .environment(\.colorScheme, clearPassThrough && !reduceTransparency ? .dark : colorScheme)
                 .tint(accent)
                 .accentColor(accent)
@@ -447,7 +448,7 @@ private struct GlassPill: View {
         .animation(detailAnimation, value: systemApps.notesExpanded)
         .animation(detailAnimation, value: systemApps.musicExpanded)
         .animation(detailAnimation, value: pomodoro.expanded)
-        .animation(detailAnimation, value: timeline.level)
+        // Timeline shell geometry is driven by BallView; avoid a second layout animation.
     }
 
     @ViewBuilder private var content: some View {
@@ -1101,6 +1102,7 @@ final class BallView: NSView {
     var selected: Int? { didSet { if selected != oldValue { animateSelection() } } }
     private var morphingIndex: Int?
     private var pillProgress: CGFloat = 0
+    private var timelineSqueeze: CGFloat = 1
     private let pillAnimator = CapsuleAnimator()
     private var selectionOrigin: CGRect?
     private var detailExtra: CGFloat = 0
@@ -1134,7 +1136,7 @@ final class BallView: NSView {
             self?.animateDetail(expanded, extra: 424)
         }
         timeline.expansionChanged = { [weak self] level in
-            self?.animateDetail(true, extra: TimelineDesign.headerHeight + CGFloat(level) * TimelineDesign.rowHeight - 36)
+            self?.animateDetail(true, extra: TimelineDesign.headerHeight + CGFloat(level) * TimelineDesign.rowHeight - 36, timelineMotion: true)
         }
         for module in config.modules {
             let host = PassiveHostingView(rootView: GlassOrb(moduleID: module.id))
@@ -1262,7 +1264,7 @@ final class BallView: NSView {
             let diameter = 3 + (target.width - 3) * eased
             let y = -5 + (target.midY + 5) * eased
             let hoveredScale: CGFloat = hovered == index && pillProgress < 0.1 ? 1.13 : 1
-            let size = diameter * hoveredScale
+            let size = diameter * hoveredScale * (index == morphingIndex ? timelineSqueeze : 1)
             let host = ballHosts[index]
             host.frame = CGRect(x: target.midX - size / 2, y: y - size / 2,
                                 width: size, height: size)
@@ -1285,6 +1287,7 @@ final class BallView: NSView {
         let previousExtra = detailExtra
         selectionOrigin = selected != nil && morphingIndex != nil ? pillHost?.frame : nil
         detailAnimator.cancel()
+        timelineSqueeze = 1
         detailExtra = 0
         store.setReminderExpanded(false)
         systemApps.setExpanded("notes", false)
@@ -1297,7 +1300,7 @@ final class BallView: NSView {
         }
         detailAnimator.cancel()
         detailExtra = selected == nil ? previousExtra :
-            (config.modules[selected!].id == "timeline" ? TimelineDesign.headerHeight + CGFloat(timeline.level) * TimelineDesign.rowHeight - 36 : 0)
+            (config.modules[selected!].id == "timeline" ? TimelineDesign.headerHeight + CGFloat(timeline.renderedLevel) * TimelineDesign.rowHeight - 36 : 0)
         heightChanged?(desiredHeight)
         if let selected {
             if selectionOrigin != nil { pillProgress = 0 }
@@ -1323,9 +1326,13 @@ final class BallView: NSView {
         }
         let start = pillProgress
         let end: CGFloat = selected == nil ? 0 : 1
-        pillAnimator.animate(duration: selectionOrigin == nil ? 0.28 : 0.22) { [weak self] t in
+        let timelineOpening = selected.map { config.modules[$0].id == "timeline" } == true && selectionOrigin == nil
+        pillAnimator.animate(duration: timelineOpening ? 0.42 : selectionOrigin == nil ? 0.28 : 0.22,
+                             timing: timelineOpening ? { CGFloat($0) } : nil) { [weak self] t in
             guard let self else { return }
-            self.pillProgress = start + (end - start) * t
+            let travel = timelineOpening ? CGFloat(TimelineMotion.smooth((Double(t) - 0.08) / 0.92)) : t
+            self.timelineSqueeze = timelineOpening ? 1 - 0.08 * sin(min(1, t / 0.20) * .pi) : 1
+            self.pillProgress = start + (end - start) * travel
             self.updateLayout()
         } completion: { [weak self] in
             guard let self else { return }
@@ -1341,10 +1348,11 @@ final class BallView: NSView {
         }
     }
 
-    private func animateDetail(_ expanded: Bool, extra: CGFloat) {
+    private func animateDetail(_ expanded: Bool, extra: CGFloat, timelineMotion: Bool = false) {
         let start = detailExtra
         let end: CGFloat = expanded ? extra : 0
-        detailAnimator.animate { [weak self] t in
+        detailAnimator.animate(duration: timelineMotion ? 0.38 : 0.28,
+                               timing: timelineMotion && end > start ? TimelineMotion.rebound : nil) { [weak self] t in
             guard let self else { return }
             self.detailExtra = start + (end - start) * t
             self.heightChanged?(self.desiredHeight)
@@ -1579,6 +1587,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "退出原型", action: #selector(quit), keyEquivalent: "q"))
         menu.items.forEach { $0.target = self }
         statusItem.menu = menu
+        timeline.interactionChanged = { [weak self] active in self?.setLyricInteraction(active) }
         systemApps.lyricInteractionChanged = { [weak self] active in
             self?.setLyricInteraction(active)
         }

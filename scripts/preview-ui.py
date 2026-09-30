@@ -22,4 +22,14 @@ with tempfile.TemporaryDirectory(prefix='notch-ui-') as temp:
                     '-framework', 'AVFoundation', '-lsqlite3', '-Xlinker', '-rpath', '-Xlinker',
                     str(root / 'vendor')], check=True)
     subprocess.run([str(binary), str(output)], check=True)
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
+motion = sorted((output / 'timeline-year-motion').glob('*.png'))
+if motion and Image is not None:
+    frames = [Image.open(path).convert('RGB').resize((568, 264), Image.Resampling.LANCZOS)
+              for path in motion]
+    frames[0].save(output / 'timeline-year-motion.gif', save_all=True, append_images=frames[1:],
+                   duration=150, loop=0, optimize=True)
 print(output)

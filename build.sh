@@ -70,6 +70,11 @@ cp scene.json now-playing.jxa white-noise.wav deep-noise.wav audio/rain.wav audi
 cp audio/CREDITS.md "$APP/Contents/Resources/AUDIO-CREDITS.md"
 ./scripts/sign-app.sh "$APP"
 # Only replace the known build output after compilation and signing succeed.
-rm -rf 'Notch Balls Prototype.app'
-ditto "$APP" 'Notch Balls Prototype.app'
-echo 'Built Notch Balls Prototype.app (arm64, macOS 14.0+)'
+NB_OUTPUT_APP='Notch Balls Prototype.app'
+if [[ "${BUILD_PREVIEW:-0}" == "1" ]]; then
+    mkdir -p build
+    NB_OUTPUT_APP='build/Notch Balls Prototype Preview.app'
+fi
+rm -rf "$NB_OUTPUT_APP"
+ditto "$APP" "$NB_OUTPUT_APP"
+echo "Built $NB_OUTPUT_APP (arm64, macOS 14.0+)"

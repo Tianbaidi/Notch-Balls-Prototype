@@ -7,7 +7,7 @@ let scratchDefaults = UserDefaults(suiteName: previewSuite)!
 let previewStore = ModuleStore()
 let previewSystem = SystemAppsStore()
 let previewPomodoro = PomodoroModel(defaults: scratchDefaults, phaseCue: { _ in })
-let previewTimeline = TimelineStore(defaults: scratchDefaults, startTimer: false)
+let previewTimeline = TimelineStore(defaults: scratchDefaults, startTimer: false, calendarAuthorization: { .denied })
 let previewInteraction = CapsuleInteraction(defaults: scratchDefaults)
 previewInteraction.controlsArmed = true
 extension ModuleStore { func loadPreview() {
@@ -43,7 +43,7 @@ previewSystem.loadPreview()
 let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
 try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
 func render<V: View>(_ view: V, name: String, size: CGSize, dark: Bool = false,
-                     settle: TimeInterval = 0.25) {
+                     settle: TimeInterval = 0.25, motionFrames: Int = 0) {
     let root = view.environment(\.colorScheme, dark ? .dark : .light)
         .frame(width: size.width, height: size.height)
         .padding(24)
@@ -61,6 +61,19 @@ func render<V: View>(_ view: V, name: String, size: CGSize, dark: Bool = false,
     guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { fatalError("Bitmap unavailable") }
     host.cacheDisplay(in: host.bounds, to: rep)
     try! rep.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent(name + ".png"))
+    if motionFrames > 0 {
+        let frames = output.appendingPathComponent(name + "-motion", isDirectory: true)
+        try! FileManager.default.createDirectory(at: frames, withIntermediateDirectories: true)
+        for index in 0..<motionFrames {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+            host.layoutSubtreeIfNeeded()
+            host.display()
+            let frame = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: frame)
+            try! frame.representation(using: .png, properties: [:])!
+                .write(to: frames.appendingPathComponent(String(format: "%02d.png", index)))
+        }
+    }
     window.orderOut(nil)
     print("Rendered \(name) \(Int(size.width)) × \(Int(size.height))")
 }
@@ -92,12 +105,24 @@ render(pill("timeline"), name: "timeline-day", size: CGSize(width: 520, height: 
 previewTimeline.setLevel(2)
 render(pill("timeline"), name: "timeline-month", size: CGSize(width: 520, height: 156), dark: true, settle: 1.1)
 previewTimeline.setLevel(3)
-render(pill("timeline"), name: "timeline-year", size: CGSize(width: 520, height: 216), dark: true, settle: 1.1)
+render(pill("timeline"), name: "timeline-year", size: CGSize(width: 520, height: 216),
+       dark: true, settle: 1.1, motionFrames: 12)
+render(pill("timeline"), name: "timeline-light", size: CGSize(width: 520, height: 216), settle: 1.1)
+render(pill("timeline"), name: "timeline-entry", size: CGSize(width: 520, height: 216),
+       dark: true, settle: 0.02, motionFrames: 12)
 previewTimeline.loadPreview((0..<14).map { index in
     sample("dense-\(index)", "重叠事件 \(index + 1)", day: 0,
            hour: 9 + index / 4, duration: 55, calendar: ["工作", "个人", "家庭"][index % 3])
 })
 render(pill("timeline"), name: "timeline-dense", size: CGSize(width: 520, height: 216), dark: true, settle: 1.1)
+render(TimelineFlowField(scale: .month, fillWidth: 400, time: 0, strength: 0.65),
+       name: "timeline-flow-a", size: CGSize(width: 440, height: 49), dark: true)
+render(TimelineFlowField(scale: .month, fillWidth: 400, time: 4, strength: 0.65),
+       name: "timeline-flow-b", size: CGSize(width: 440, height: 49), dark: true)
+let firstFlowFrame = try Data(contentsOf: output.appendingPathComponent("timeline-flow-a.png"))
+let secondFlowFrame = try Data(contentsOf: output.appendingPathComponent("timeline-flow-b.png"))
+assert(firstFlowFrame != secondFlowFrame)
+print("PASS: settled timeline color field changes across ambient frames")
 var eastern = Calendar(identifier: .gregorian)
 eastern.timeZone = TimeZone(identifier: "America/New_York")!
 let spring = eastern.date(from: DateComponents(year: 2024, month: 3, day: 10, hour: 12))!
@@ -313,3 +338,144 @@ assert(MusicTrackIdentity.persistedKey("Song\u{1f}Artist\u{1f}Album\u{1f}241", e
 assert(MusicTrackIdentity.persistedKey("Song\u{1f}Artist\u{1f}Album\u{1f}250", existing: [remembered]) != remembered)
 assert(MusicTrackIdentity.persistedKey("Song\u{1f}Other\u{1f}Album\u{1f}240", existing: [remembered]) != remembered)
 print("PASS: saved corrections survive duration jitter without crossing artists or different-length versions")
+
+// Calendar authorization regression uses an injected source; no real calendar is queried or saved.
+final class FixtureCalendarSource: TimelineCalendarSource {
+    var accessCompletion: (@Sendable (Bool, (any Error)?) -> Void)?
+    var requestCount = 0
+    var readCount = 0
+    var emptyReads = 0
+    var rows: [EKCalendar] = []
+    var eventRows: [EKEvent] = []
+    func requestFullAccessToEvents(completion: @escaping @Sendable (Bool, (any Error)?) -> Void) {
+        requestCount += 1; accessCompletion = completion
+    }
+    func reset() {}
+    func calendars(for entityType: EKEntityType) -> [EKCalendar] {
+        readCount += 1
+        return readCount <= emptyReads ? [] : rows
+    }
+    func predicateForEvents(withStart startDate: Date, end endDate: Date, calendars: [EKCalendar]?) -> NSPredicate {
+        NSPredicate(value: true)
+    }
+    func events(matching predicate: NSPredicate) -> [EKEvent] { eventRows }
+}
+func awaitCalendar(_ condition: () -> Bool, timeout: Double = 2) {
+    let end = Date().addingTimeInterval(timeout)
+    while !condition() && Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+    assert(condition())
+}
+let fixtureOwner = EKEventStore()
+let fixtureCalendar = EKCalendar(for: .event, eventStore: fixtureOwner)
+fixtureCalendar.title = "Synthetic calendar"
+let fixtureEvent = EKEvent(eventStore: fixtureOwner)
+fixtureEvent.calendar = fixtureCalendar
+fixtureEvent.title = "Synthetic event"
+fixtureEvent.startDate = Date()
+fixtureEvent.endDate = Date().addingTimeInterval(3600)
+let oldCalendarSource = FixtureCalendarSource()
+let newCalendarSource = FixtureCalendarSource()
+newCalendarSource.rows = [fixtureCalendar]
+newCalendarSource.eventRows = [fixtureEvent]
+newCalendarSource.emptyReads = 1
+var testAuthorization: EKAuthorizationStatus = .notDetermined
+var sourceCount = 0
+let calendarSuiteName = "notch-calendar-test-\(UUID().uuidString)"
+let calendarDefaults = UserDefaults(suiteName: calendarSuiteName)!
+let calendarModel = TimelineStore(defaults: calendarDefaults, startTimer: false,
+    calendarAuthorization: { testAuthorization }, makeCalendarSource: {
+        sourceCount += 1
+        return sourceCount == 1 ? oldCalendarSource : newCalendarSource
+    })
+calendarModel.open(pinned: false)
+calendarModel.open(pinned: false)
+assert(oldCalendarSource.requestCount == 1)
+assert(oldCalendarSource.readCount == 0)
+testAuthorization = .fullAccess
+oldCalendarSource.accessCompletion?(true, nil)
+awaitCalendar({ calendarModel.events.count == 1 })
+assert(sourceCount == 2 && newCalendarSource.readCount >= 2)
+assert(calendarModel.calendarReady && !calendarModel.calendarRequestPending)
+testAuthorization = .denied
+calendarModel.refreshTime()
+assert(!calendarModel.calendarReady && calendarModel.events.isEmpty && calendarModel.calendars.isEmpty)
+testAuthorization = .fullAccess
+calendarModel.refreshTime()
+assert(calendarModel.calendarReady && calendarModel.events.count == 1)
+calendarModel.disableCalendar()
+assert(calendarModel.events.isEmpty && !calendarModel.calendarEnabled)
+
+let lateSource = FixtureCalendarSource()
+let lateModel = TimelineStore(defaults: calendarDefaults, startTimer: false,
+    calendarAuthorization: { .notDetermined }, makeCalendarSource: { lateSource })
+lateModel.enableCalendar()
+lateModel.disableCalendar()
+lateSource.accessCompletion?(true, nil)
+awaitCalendar({ !lateModel.calendarRequestPending })
+assert(!lateModel.calendarEnabled && lateSource.readCount == 0)
+
+let emptySource = FixtureCalendarSource()
+let emptyModel = TimelineStore(defaults: calendarDefaults, startTimer: false,
+    calendarAuthorization: { .fullAccess }, makeCalendarSource: { emptySource })
+emptyModel.enableCalendar()
+let retryEnd = Date().addingTimeInterval(4.6)
+while Date() < retryEnd { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+assert(emptySource.readCount == 4, "Calendar retries must be bounded")
+assert(emptyModel.calendarMessage == "暂无可用日历")
+emptyModel.disableCalendar()
+let deniedSource = FixtureCalendarSource()
+let deniedModel = TimelineStore(defaults: calendarDefaults, startTimer: false,
+    calendarAuthorization: { .denied }, makeCalendarSource: { deniedSource })
+deniedModel.open(pinned: false)
+deniedModel.open(pinned: false)
+assert(deniedSource.requestCount == 0 && deniedSource.readCount == 0)
+assert(!deniedModel.calendarReady && deniedModel.events.isEmpty)
+assert(deniedModel.calendarMessage == "请在系统设置中允许访问日历")
+let grantedSource = FixtureCalendarSource()
+grantedSource.rows = [fixtureCalendar]
+grantedSource.eventRows = [fixtureEvent]
+let grantedModel = TimelineStore(defaults: calendarDefaults, startTimer: false,
+    calendarAuthorization: { .fullAccess }, makeCalendarSource: { grantedSource })
+grantedModel.open(pinned: false)
+assert(grantedSource.requestCount == 0 && grantedModel.events.count == 1)
+grantedModel.disableCalendar()
+calendarDefaults.removePersistentDomain(forName: calendarSuiteName)
+print("PASS: opening timeline requests access once, denied access does not reprompt, existing permission loads immediately")
+print("PASS: calendar grant loads without restart, delayed data retries, permission changes, duplicate requests, late callback and bounded empty-calendar retries")
+
+// Interrupted transitions must never apply stale heights or close a reopened capsule.
+let motionModel = TimelineStore(defaults: scratchDefaults, startTimer: false, calendarAuthorization: { .denied })
+motionModel.setLevel(3)
+motionModel.setLevel(1)
+if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { assert(motionModel.renderedLevel == 3) }
+motionModel.setLevel(2)
+RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+assert(motionModel.level == 2 && motionModel.renderedLevel == 2 && motionModel.retiringFrom == nil)
+var closed = false
+motionModel.close { closed = true }
+motionModel.open(pinned: false)
+RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { assert(!closed) }
+assert(motionModel.visible && !motionModel.closing && motionModel.renderedLevel == 1)
+var interactions: [Bool] = []
+motionModel.interactionChanged = { interactions.append($0) }
+motionModel.setInteracting(.day, true)
+motionModel.setInteracting(.month, true)
+motionModel.setInteracting(.day, false)
+assert(interactions == [true])
+motionModel.hide()
+assert(interactions == [true, false])
+for index in 0...100 {
+    let phase = Double(index) / 100
+    assert(TimelineMotion.rebound(phase) >= -0.0001 && TimelineMotion.rebound(phase) < 1.02)
+    for start in [0.0, 0.2, 0.5, 1.0] {
+        assert(TimelineMotion.eventPhase(start: start, progress: 0.5, phase: 1) == 1)
+        assert(TimelineMotion.eventPhase(start: start, progress: 0.5, phase: 0) == 0)
+    }
+}
+assert(TimelineMotion.fillPhase(0) == 0 && TimelineMotion.fillPhase(0.82) == 1)
+assert(TimelineMotion.eventPhase(start: 0.25, progress: 0.5, phase: 0.4) == 0)
+assert(TimelineMotion.eventPhase(start: 0.25, progress: 0.5, phase: 0.5) > 0)
+assert(TimelineMotion.ambientStrength(elapsed: 4, hovered: false, passive: true) < 0.1)
+assert(TimelineMotion.ambientStrength(elapsed: 4, hovered: true, passive: true) == 0.65)
+print("PASS: interrupted timeline transitions, popover interaction balance, sweep arrivals and quiet idle")

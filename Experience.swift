@@ -83,7 +83,7 @@ final class CapsuleAnimator {
         let t = min(1, max(0, elapsed / duration))
         return CGFloat(1 - pow(1 - t, 3))
     }
-    func animate(duration: Double = 0.28, step: @escaping (CGFloat) -> Void,
+    func animate(duration: Double = 0.28, timing: ((Double) -> CGFloat)? = nil, step: @escaping (CGFloat) -> Void,
                  completion: @escaping () -> Void = {}) {
         cancel()
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || duration <= 0 {
@@ -92,7 +92,7 @@ final class CapsuleAnimator {
         let start = ProcessInfo.processInfo.systemUptime
         let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { timer in
             let elapsed = ProcessInfo.processInfo.systemUptime - start
-            step(Self.progress(elapsed, duration: duration))
+            step(timing?(min(1, max(0, elapsed / duration))) ?? Self.progress(elapsed, duration: duration))
             if elapsed >= duration { timer.invalidate(); completion() }
         }
         self.timer = timer

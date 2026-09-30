@@ -55,5 +55,16 @@ class FeedTests(unittest.TestCase):
                     r.verify_archive(archive, dict(sha256='0'*64, length=8))
                 verifier.assert_not_called()
 
+class AssetMetadataTests(unittest.TestCase):
+    def test_metadata_requires_matching_digest_size_and_upload(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'test.zip'
+            path.write_bytes(b'fixture')
+            valid = dict(state='uploaded', size=7, digest='sha256:' + r.digest(path))
+            r.verify_asset_metadata(valid, path)
+            for change in ({'state': 'new'}, {'size': 8}, {'digest': None}, {'digest': 'sha256:bad'}):
+                with self.assertRaises(RuntimeError):
+                    r.verify_asset_metadata(dict(valid, **change), path)
+
 if __name__ == '__main__':
     unittest.main()
