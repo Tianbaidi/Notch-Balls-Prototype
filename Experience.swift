@@ -17,7 +17,7 @@ enum CapsuleTheme {
         case "reminders": return "checklist"
         case "notes": return "note.text"
         case "music": return "music.note"
-        case "timeline": return "timeline.selection"
+        case "timeline": return "calendar.day.timeline.left"
         default: return "timer"
         }
     }
@@ -40,16 +40,62 @@ enum CapsuleTheme {
     }
 }
 
+/// Shared surfaces keep every module's cards and inputs in the same visual family.
+struct CapsuleCard: ViewModifier {
+    var accent: Color = .clear
+    var corner: CGFloat = 12
+    @Environment(\.colorScheme) private var scheme
+    func body(content: Content) -> some View {
+        content.background {
+            RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .fill(.primary.opacity(scheme == .dark ? 0.035 : 0.025))
+                .overlay {
+                    RoundedRectangle(cornerRadius: corner, style: .continuous)
+                        .fill(LinearGradient(colors: [accent.opacity(0.075), accent.opacity(0.018)],
+                                             startPoint: .topLeading, endPoint: .bottomTrailing))
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: corner, style: .continuous)
+                        .strokeBorder(.primary.opacity(scheme == .dark ? 0.055 : 0.04), lineWidth: 0.5)
+                }
+        }
+    }
+}
+
+struct CapsuleGlyph: View {
+    let moduleID: String
+    var size: CGFloat = 30
+    var body: some View {
+        let accent = CapsuleTheme.accent(moduleID)
+        Image(systemName: CapsuleTheme.symbol(moduleID))
+            .font(.system(size: size * 0.46, weight: .medium))
+            .foregroundStyle(accent)
+            .frame(width: size, height: size)
+            .modifier(CapsuleCard(accent: accent, corner: size * 0.3))
+            .accessibilityHidden(true)
+    }
+}
+
+enum CapsuleMotion {
+    static func smooth(_ value: Double) -> Double {
+        let t = min(1, max(0, value))
+        return t * t * t * (t * (t * 6 - 15) + 10)
+    }
+}
+
 struct CapsuleButtonStyle: ButtonStyle {
     var prominent = false
+    var subtle = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
-        Surface(configuration: configuration, prominent: prominent, reduceMotion: reduceMotion, enabled: enabled)
+        Surface(configuration: configuration, prominent: prominent, subtle: subtle,
+                reduceMotion: reduceMotion, enabled: enabled)
     }
     private struct Surface: View {
         let configuration: ButtonStyleConfiguration
         let prominent: Bool
+        let subtle: Bool
         let reduceMotion: Bool
         let enabled: Bool
         @State private var hovered = false
@@ -58,15 +104,23 @@ struct CapsuleButtonStyle: ButtonStyle {
                 .foregroundStyle(prominent ? Color.black.opacity(0.85) : Color.primary)
                 .background {
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(prominent ? Color.accentColor.opacity(configuration.isPressed ? 0.7 : 0.9)
-                              : Color.primary.opacity(configuration.isPressed ? 0.14 : hovered ? 0.08 : 0.035))
+                        .fill(prominent ? Color.accentColor.opacity(configuration.isPressed ? 0.74 : hovered ? 0.98 : 0.90)
+                              : Color.primary.opacity(configuration.isPressed ? 0.10 : hovered ? 0.065 : subtle ? 0 : 0.022))
+                        .overlay {
+                            if prominent {
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .fill(LinearGradient(colors: [.white.opacity(0.16), .clear],
+                                                         startPoint: .top, endPoint: .bottom))
+                            }
+                        }
                 }
                 .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(.primary.opacity(hovered ? 0.12 : 0.04), lineWidth: 0.5))
-                .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
-                .opacity(enabled ? 1 : 0.38)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: configuration.isPressed)
-                .animation(.easeOut(duration: 0.14), value: hovered)
+                    .strokeBorder(.primary.opacity(subtle && !hovered ? 0 : hovered ? 0.085 : 0.035), lineWidth: 0.5))
+                .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+                .offset(y: hovered && !configuration.isPressed && !reduceMotion && enabled ? -0.5 : 0)
+                .opacity(enabled ? 1 : 0.36)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: hovered)
                 .onHover { hovered = $0 }
         }
     }
@@ -81,7 +135,7 @@ final class CapsuleAnimator {
     static func progress(_ elapsed: Double, duration: Double) -> CGFloat {
         guard duration > 0 else { return 1 }
         let t = min(1, max(0, elapsed / duration))
-        return CGFloat(1 - pow(1 - t, 3))
+        return CGFloat(CapsuleMotion.smooth(t))
     }
     func animate(duration: Double = 0.28, timing: ((Double) -> CGFloat)? = nil, step: @escaping (CGFloat) -> Void,
                  completion: @escaping () -> Void = {}) {

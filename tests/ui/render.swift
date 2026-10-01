@@ -93,6 +93,18 @@ func sample(_ id: String, _ title: String, day: Int, hour: Int, duration: Int, c
         isAllDay: false, calendarID: calendar, calendarTitle: calendar,
         externalID: nil, url: nil)
 }
+func orbPalette() -> some View {
+    HStack(spacing: 24) {
+        ForEach(SceneConfig.fallback.modules, id: \.id) { module in
+            VStack(spacing: 8) {
+                GlassOrb(moduleID: module.id).frame(width: 26, height: 26)
+                Text(module.title).font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+render(orbPalette(), name: "orbs-unified-light", size: CGSize(width: 400, height: 82))
+render(orbPalette(), name: "orbs-unified-dark", size: CGSize(width: 400, height: 82), dark: true)
 previewTimeline.open(pinned: false)
 previewTimeline.loadPreview([
     sample("work-1", "项目讨论", day: 0, hour: 9, duration: 90, calendar: "工作"),
@@ -479,3 +491,31 @@ assert(TimelineMotion.eventPhase(start: 0.25, progress: 0.5, phase: 0.5) > 0)
 assert(TimelineMotion.ambientStrength(elapsed: 4, hovered: false, passive: true) < 0.1)
 assert(TimelineMotion.ambientStrength(elapsed: 4, hovered: true, passive: true) == 0.65)
 print("PASS: interrupted timeline transitions, popover interaction balance, sweep arrivals and quiet idle")
+
+extension BallView {
+    var previewHoverWeights: [CGFloat] { hoverWeights }
+    var previewPillAlpha: CGFloat? { pillHost?.alphaValue }
+    var previewPillHidden: Bool { pillHost?.isHidden ?? true }
+    var previewPillFrame: CGRect? { pillHost?.frame }
+}
+let motionBalls = BallView(frame: CGRect(x: 0, y: 0, width: 640, height: 540),
+    config: testConfig, store: previewStore, systemApps: previewSystem,
+    pomodoro: previewPomodoro, timeline: previewTimeline)
+motionBalls.reveal = 1
+motionBalls.hovered = 0
+motionBalls.hovered = 1
+motionBalls.hovered = nil
+RunLoop.main.run(until: Date().addingTimeInterval(0.25))
+assert(motionBalls.previewHoverWeights.allSatisfy { abs($0) < 0.001 })
+motionBalls.selected = 0
+RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+let priorFrame = motionBalls.previewPillFrame!
+motionBalls.selected = 1
+assert(!motionBalls.previewPillHidden, "Switching modules must preserve visibility")
+assert(motionBalls.previewPillAlpha == 1, "Switching modules must not blank the capsule")
+assert(motionBalls.previewPillFrame == priorFrame, "Switching modules must begin at the visible capsule")
+RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+motionBalls.selected = nil
+RunLoop.main.run(until: Date().addingTimeInterval(0.35))
+assert(motionBalls.previewPillFrame == nil && motionBalls.previewPillAlpha == nil)
+print("PASS: smooth hover interruption and module switch preserves visible shell")

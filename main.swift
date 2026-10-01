@@ -256,46 +256,69 @@ private struct NativePillGlass: NSViewRepresentable {
 private struct IridescentRim: View {
     let corner: CGFloat
     let passive: Bool
+    let accent: Color
+    let engaged: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var enteredAt = ProcessInfo.processInfo.systemUptime
+    @State private var entering = true
+    @State private var hoverChangedAt = ProcessInfo.processInfo.systemUptime
+    @State private var hoverTransition = false
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: reduceMotion || passive || ProcessInfo.processInfo.isLowPowerModeEnabled)) { timeline in
-            let time = reduceMotion || passive || ProcessInfo.processInfo.isLowPowerModeEnabled ? 0 : timeline.date.timeIntervalSinceReferenceDate
-            let breathing = reduceMotion ? 1 : 0.94 + 0.06 * sin(time * 0.72)
-            let spectrum = colorField(time: time)
+        TimelineView(.animation(minimumInterval: 1.0 / 20.0,
+                                paused: reduceMotion || passive || (!entering && !engaged && !hoverTransition) || ProcessInfo.processInfo.isLowPowerModeEnabled)) { _ in
+            let elapsed = ProcessInfo.processInfo.systemUptime - enteredAt
+            let hoverPhase = CapsuleMotion.smooth((ProcessInfo.processInfo.systemUptime - hoverChangedAt) / 0.20)
+            let hoverEnergy = engaged ? hoverPhase : hoverTransition ? 1 - hoverPhase : 0
+            let energy = reduceMotion || passive || ProcessInfo.processInfo.isLowPowerModeEnabled ? 0
+                : max(hoverEnergy, 1 - CapsuleMotion.smooth((elapsed - 0.5) / 1.5))
+            let spectrum = colorField(time: elapsed, energy: energy)
             ZStack {
                 spectrum
-                    .mask(RoundedRectangle(cornerRadius: corner).strokeBorder(lineWidth: 4))
-                    .blur(radius: 2)
-                    .opacity(0.38)
+                    .mask(RoundedRectangle(cornerRadius: corner).strokeBorder(lineWidth: 3))
+                    .blur(radius: 1.4)
+                    .opacity(0.18)
                 spectrum
-                    .mask(RoundedRectangle(cornerRadius: corner).strokeBorder(lineWidth: 2))
-                    .blur(radius: 1.2)
-                    .opacity(0.62)
+                    .mask(RoundedRectangle(cornerRadius: corner).strokeBorder(lineWidth: 1.5))
+                    .blur(radius: 0.6)
+                    .opacity(0.34)
                 spectrum
-                    .mask(RoundedRectangle(cornerRadius: corner).strokeBorder(lineWidth: 1.2))
-                    .opacity(0.9)
+                    .mask(RoundedRectangle(cornerRadius: corner).strokeBorder(lineWidth: 0.75))
+                    .opacity(0.70)
                 RoundedRectangle(cornerRadius: corner).inset(by: 0.6)
                     .stroke(LinearGradient(colors: [.white.opacity(0.52), .white.opacity(0.12), .white.opacity(0.32)],
                                            startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.45)
             }
             .mask(RoundedRectangle(cornerRadius: corner).strokeBorder(lineWidth: 7))
-            .opacity(breathing * (passive ? 0.48 : 0.76))
+            .opacity(passive ? 0.35 : 0.68)
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+        .task {
+            enteredAt = ProcessInfo.processInfo.systemUptime
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            entering = false
+        }
+        .task(id: engaged) {
+            hoverChangedAt = ProcessInfo.processInfo.systemUptime
+            hoverTransition = true
+            try? await Task.sleep(nanoseconds: 230_000_000)
+            guard !Task.isCancelled else { return }
+            hoverTransition = false
+        }
     }
 
-    @ViewBuilder private func colorField(time: Double) -> some View {
-        let x1 = Float(0.33 + 0.10 * sin(time * 0.41))
-        let x2 = Float(0.67 + 0.10 * sin(time * 0.33 + 1.8))
-        let y1 = Float(0.50 + 0.20 * sin(time * 0.47 + 0.7))
-        let y2 = Float(0.50 + 0.20 * sin(time * 0.38 + 2.1))
+    @ViewBuilder private func colorField(time: Double, energy: Double) -> some View {
+        let x1 = Float(0.33 + 0.10 * energy * sin(time * 0.41))
+        let x2 = Float(0.67 + 0.10 * energy * sin(time * 0.33 + 1.8))
+        let y1 = Float(0.50 + 0.20 * energy * sin(time * 0.47 + 0.7))
+        let y2 = Float(0.50 + 0.20 * energy * sin(time * 0.38 + 2.1))
         let colors: [Color] = [
-            Color(red: 0.45, green: 0.88, blue: 1), Color(red: 0.49, green: 0.60, blue: 1),
+            accent, Color(red: 0.49, green: 0.60, blue: 1),
             Color(red: 0.82, green: 0.48, blue: 1), Color(red: 1, green: 0.65, blue: 0.81),
             Color(red: 0.64, green: 0.72, blue: 1), Color(red: 0.93, green: 0.76, blue: 1),
-            Color(red: 1, green: 0.84, blue: 0.91), Color(red: 1, green: 0.72, blue: 0.52),
+            Color(red: 1, green: 0.84, blue: 0.91), accent,
             Color(red: 1, green: 0.76, blue: 0.49), Color(red: 1, green: 0.51, blue: 0.71),
             Color(red: 0.68, green: 0.51, blue: 1), Color(red: 0.48, green: 0.91, blue: 1)
         ]
@@ -401,7 +424,7 @@ private struct GlassPill: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     private var accent: Color { CapsuleTheme.accent(module.id) }
     private var clearPassThrough: Bool { locked && !interaction.controlsArmed }
-    private var detailAnimation: Animation? { reduceMotion ? nil : .easeOut(duration: 0.24) }
+    @State private var surfaceHovered = false
 
     var body: some View {
         let detailOpen = (module.id == "reminders" && store.reminderExpanded)
@@ -424,8 +447,13 @@ private struct GlassPill: View {
                     RoundedRectangle(cornerRadius: corner).fill(.ultraThinMaterial)
                 }
             }
+            RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .fill(LinearGradient(colors: [.white.opacity(clearPassThrough ? 0 : colorScheme == .dark ? 0.025 : 0.12),
+                                              .clear, accent.opacity(clearPassThrough ? 0 : 0.018)],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                .allowsHitTesting(false)
             content.padding(.horizontal, detailOpen ? 16 : 10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: module.id == "timeline" ? .topLeading : .center)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: detailOpen && module.id != "music" ? .topLeading : .center)
                 .environment(\.colorScheme, clearPassThrough && !reduceTransparency ? .dark : colorScheme)
                 .tint(accent)
                 .accentColor(accent)
@@ -438,17 +466,13 @@ private struct GlassPill: View {
                 .allowsHitTesting(false)
         }
         .overlay {
-            IridescentRim(corner: corner, passive: clearPassThrough)
-                .opacity(module.id == "timeline" ? 0.35 : 1)
+            IridescentRim(corner: corner, passive: clearPassThrough, accent: accent, engaged: surfaceHovered)
         }
         .contentShape(RoundedRectangle(cornerRadius: corner))
-        .animation(.easeOut(duration: 0.22), value: clearPassThrough)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.20), value: clearPassThrough)
+        .onHover { surfaceHovered = $0 }
         .accessibilityValue(locked ? (clearPassThrough ? "已锁定，点击穿透" : "已锁定，可操作") : "可操作")
-        .animation(detailAnimation, value: store.reminderExpanded)
-        .animation(detailAnimation, value: systemApps.notesExpanded)
-        .animation(detailAnimation, value: systemApps.musicExpanded)
-        .animation(detailAnimation, value: pomodoro.expanded)
-        // Timeline shell geometry is driven by BallView; avoid a second layout animation.
+        // One AppKit animator controls shell geometry for every module.
     }
 
     @ViewBuilder private var content: some View {
@@ -586,7 +610,7 @@ private struct GlassPill: View {
                     .contentShape(Rectangle())
             }.buttonStyle(.plain)
             iconButton("backward.end.fill") { systemApps.musicCommand("previous") }
-            iconButton(systemApps.musicPlaying ? "pause.fill" : "play.fill") {
+            iconButton(systemApps.musicPlaying ? "pause.fill" : "play.fill", prominent: true) {
                 systemApps.musicCommand("toggle")
             }
             iconButton("forward.end.fill") { systemApps.musicCommand("next") }
@@ -627,7 +651,7 @@ private struct GlassPill: View {
                         } else {
                             TextField("这次专注做什么？", text: $pomodoro.focusDraft)
                                 .textFieldStyle(.plain).font(.system(size: 12))
-                                .padding(10).background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
+                                .padding(10).modifier(CapsuleCard(accent: accent, corner: 9))
                                 .onSubmit { pomodoro.start() }
                             Text(pomodoro.nameError ? "先写下一个小目标，再开始" : "输入目标，按回车开始")
                                 .font(.system(size: 10)).foregroundStyle(pomodoro.nameError ? accent : .secondary)
@@ -638,7 +662,7 @@ private struct GlassPill: View {
                                 .font(.system(size: 11, weight: .semibold)).frame(maxWidth: .infinity).frame(height: 32)
                         }.buttonStyle(CapsuleButtonStyle(prominent: true))
                     }.frame(maxWidth: .infinity, alignment: .leading)
-                }.padding(12).background(accent.opacity(0.055), in: RoundedRectangle(cornerRadius: 16))
+                }.padding(12).modifier(CapsuleCard(accent: accent, corner: 16))
                 HStack(spacing: 8) {
                     labeledButton("跳过阶段", symbol: "forward.end") { pomodoro.skipPhase() }
                     labeledButton("重置计时", symbol: "arrow.counterclockwise") { pomodoro.resetCurrent() }
@@ -675,16 +699,14 @@ private struct GlassPill: View {
                     if let error = pomodoro.soundError {
                         Text(error).font(.system(size: 10)).foregroundStyle(.secondary)
                     }
-                }.padding(12).background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 14))
+                }.padding(12).modifier(CapsuleCard(corner: 14))
             }.padding(.vertical, 14)
         }.scrollIndicators(.hidden)
     }
 
     private func detailHeader(_ title: String, subtitle: String, collapse: @escaping () -> Void) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: CapsuleTheme.symbol(module.id)).font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(accent).frame(width: 30, height: 30)
-                .background(accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+            CapsuleGlyph(moduleID: module.id)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 14, weight: .semibold))
                 Text(subtitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
@@ -743,7 +765,7 @@ private struct GlassPill: View {
                                         .foregroundStyle(.secondary)
                                 }
                             }
-                        }
+                        }.padding(9).modifier(CapsuleCard(accent: store.focusedReminderID == row.id ? accent : .clear, corner: 10))
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -756,7 +778,7 @@ private struct GlassPill: View {
                         .onSubmit { saveReminder() }
                     iconButton("plus") { saveReminder() }
                 }
-                .padding(9).background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+                .padding(9).modifier(CapsuleCard(accent: accent, corner: 10))
                 HStack(spacing: 8) {
                     Toggle("到期时间", isOn: $store.newReminderHasDue)
                         .toggleStyle(.checkbox).font(.system(size: 10))
@@ -794,8 +816,8 @@ private struct GlassPill: View {
                                 Spacer()
                                 Image(systemName: "arrow.up.forward.app")
                             }.font(.system(size: 12)).padding(10)
-                                .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-                        }.buttonStyle(.plain)
+                                .modifier(CapsuleCard(accent: accent, corner: 10))
+                        }.buttonStyle(CapsuleButtonStyle(subtle: true))
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -804,7 +826,7 @@ private struct GlassPill: View {
                     .textFieldStyle(.plain).font(.system(size: 11))
                     .onSubmit { systemApps.createNote() }
                 iconButton("plus") { systemApps.createNote() }
-            }.padding(9).background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+            }.padding(9).modifier(CapsuleCard(accent: accent, corner: 10))
             HStack {
                 Text("点标题在备忘录中打开").font(.system(size: 10)).foregroundStyle(.secondary)
                 Spacer()
@@ -829,7 +851,7 @@ private struct GlassPill: View {
                     Text(systemApps.musicArtist).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                     HStack {
                         iconButton("backward.end.fill") { systemApps.musicCommand("previous") }
-                        iconButton(systemApps.musicPlaying ? "pause.fill" : "play.fill") { systemApps.musicCommand("toggle") }
+                        iconButton(systemApps.musicPlaying ? "pause.fill" : "play.fill", prominent: true) { systemApps.musicCommand("toggle") }
                         iconButton("forward.end.fill") { systemApps.musicCommand("next") }
                         Spacer(minLength: 0)
                         iconButton(interaction.isPinned("music") ? "pin.fill" : "pin") { togglePin() }
@@ -864,7 +886,7 @@ private struct GlassPill: View {
                     .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                 HStack(spacing: 12) {
                     iconButton("backward.end.fill") { systemApps.musicCommand("previous") }
-                    iconButton(systemApps.musicPlaying ? "pause.fill" : "play.fill") {
+                    iconButton(systemApps.musicPlaying ? "pause.fill" : "play.fill", prominent: true) {
                         systemApps.musicCommand("toggle")
                     }
                     iconButton("forward.end.fill") { systemApps.musicCommand("next") }
@@ -875,7 +897,7 @@ private struct GlassPill: View {
                 GeometryReader { geometry in
                     Capsule().fill(.primary.opacity(0.13))
                         .overlay(alignment: .leading) {
-                            Capsule().fill(.primary.opacity(0.7))
+                            Capsule().fill(accent.gradient)
                                 .frame(width: geometry.size.width * min(1, max(0,
                                     systemApps.musicElapsed / max(1, systemApps.musicDuration))))
                         }
@@ -962,19 +984,21 @@ private struct GlassPill: View {
                 .frame(width: size, height: size)
                 .clipShape(RoundedRectangle(cornerRadius: size / 6))
         } else {
-            RoundedRectangle(cornerRadius: size / 6).fill(.primary.opacity(0.1))
+            RoundedRectangle(cornerRadius: size / 6)
+                .fill(LinearGradient(colors: [accent.opacity(0.22), accent.opacity(0.07)],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
                 .frame(width: size, height: size)
                 .overlay(Image(systemName: "music.note")
-                    .font(.system(size: size / 3)).foregroundStyle(.secondary))
+                    .font(.system(size: size / 3, weight: .light)).foregroundStyle(accent.opacity(0.8)))
         }
     }
 
-    private func iconButton(_ symbol: String, label: String? = nil, action: @escaping () -> Void) -> some View {
+    private func iconButton(_ symbol: String, label: String? = nil, prominent: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol).font(.system(size: 11, weight: .semibold))
                 .frame(width: 26, height: 28)
         }
-        .buttonStyle(CapsuleButtonStyle())
+        .buttonStyle(CapsuleButtonStyle(prominent: prominent, subtle: !prominent))
         .help(label ?? CapsuleTheme.controlLabel(symbol))
         .accessibilityLabel(label ?? CapsuleTheme.controlLabel(symbol))
     }
@@ -1025,19 +1049,32 @@ private struct NeutralLevelSlider: View {
 
 private struct GlassOrb: View {
     let moduleID: String
+    var emphasis: CGFloat = 0
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     var body: some View {
-        ZStack {
-            if #available(macOS 26.0, *) {
-                Circle().fill(.clear).glassEffect(.regular, in: .circle)
-            } else {
-                Circle().fill(.ultraThinMaterial)
+        let accent = CapsuleTheme.accent(moduleID)
+        GeometryReader { geometry in
+            ZStack {
+                if reduceTransparency {
+                    Circle().fill(Color(nsColor: .windowBackgroundColor))
+                } else if #available(macOS 26.0, *) {
+                    Circle().fill(.clear).glassEffect(.regular, in: .circle)
+                } else {
+                    Circle().fill(.ultraThinMaterial)
+                }
+                Circle().fill(RadialGradient(colors: [accent.opacity(0.22 + Double(emphasis) * 0.12), .clear],
+                                             center: .bottomTrailing, startRadius: 0, endRadius: geometry.size.width))
+                Circle().fill(LinearGradient(colors: [.white.opacity(scheme == .dark ? 0.10 : 0.35), .clear],
+                                             startPoint: .topLeading, endPoint: .bottomTrailing))
+                Image(systemName: CapsuleTheme.symbol(moduleID))
+                    .font(.system(size: max(8, geometry.size.width * 0.43), weight: .medium))
+                    .foregroundStyle(accent)
             }
+            .overlay(Circle().strokeBorder(LinearGradient(colors: [.white.opacity(0.55), accent.opacity(0.25), .white.opacity(0.10)],
+                                                         startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.65))
+            .clipShape(Circle())
         }
-        .overlay(Circle().strokeBorder(.white.opacity(0.38), lineWidth: 0.8))
-        .overlay(Image(systemName: CapsuleTheme.symbol(moduleID))
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(CapsuleTheme.accent(moduleID)))
-        .clipShape(Circle())
     }
 }
 
@@ -1098,11 +1135,13 @@ final class BallView: NSView {
     var notchBandHeight: CGFloat = 0 { didSet { updateLayout(); needsDisplay = true } }
     var dockAlignment = 0 { didSet { updateLayout(); needsDisplay = true } }
     var reveal: CGFloat = 0 { didSet { updateLayout() } }
-    var hovered: Int? { didSet { updateLayout(); needsDisplay = true } }
+    var hovered: Int? { didSet { if hovered != oldValue { animateHover() } } }
     var selected: Int? { didSet { if selected != oldValue { animateSelection() } } }
     private var morphingIndex: Int?
     private var pillProgress: CGFloat = 0
-    private var timelineSqueeze: CGFloat = 1
+    private var orbPress: CGFloat = 1
+    private var hoverWeights: [CGFloat] = []
+    private let hoverAnimator = CapsuleAnimator()
     private let pillAnimator = CapsuleAnimator()
     private var selectionOrigin: CGRect?
     private var detailExtra: CGFloat = 0
@@ -1138,6 +1177,7 @@ final class BallView: NSView {
         timeline.expansionChanged = { [weak self] level in
             self?.animateDetail(true, extra: TimelineDesign.headerHeight + CGFloat(level) * TimelineDesign.rowHeight - 36, timelineMotion: true)
         }
+        hoverWeights = Array(repeating: 0, count: config.modules.count)
         for module in config.modules {
             let host = PassiveHostingView(rootView: GlassOrb(moduleID: module.id))
             host.isHidden = true
@@ -1263,10 +1303,11 @@ final class BallView: NSView {
             let target = visualBallRect(for: index)
             let diameter = 3 + (target.width - 3) * eased
             let y = -5 + (target.midY + 5) * eased
-            let hoveredScale: CGFloat = hovered == index && pillProgress < 0.1 ? 1.13 : 1
-            let size = diameter * hoveredScale * (index == morphingIndex ? timelineSqueeze : 1)
+            let weight = hoverWeights[index]
+            let hoveredScale: CGFloat = 1 + weight * 0.08
+            let size = diameter * hoveredScale * (index == morphingIndex ? orbPress : 1)
             let host = ballHosts[index]
-            host.frame = CGRect(x: target.midX - size / 2, y: y - size / 2,
+            host.frame = CGRect(x: target.midX - size / 2, y: y - size / 2 - weight * eased,
                                 width: size, height: size)
             host.alphaValue = index == morphingIndex
                 ? 1 - pillProgress : 1 - 0.37 * pillProgress
@@ -1277,17 +1318,33 @@ final class BallView: NSView {
             var destination = expandedLayout(for: index).pill
             destination.size.height += detailExtra
             pillHost.frame = mix(source, destination, pillProgress)
-            pillHost.alphaValue = min(1, max(0, (pillProgress - 0.25) / 0.75))
-            pillHost.isHidden = pillProgress < 0.01
+            pillHost.alphaValue = selectionOrigin != nil ? 1 : min(1, max(0, (pillProgress - 0.18) / 0.82))
+            pillHost.isHidden = selectionOrigin == nil && pillProgress < 0.01
         }
         updateHintLayout()
+    }
+
+    private func animateHover() {
+        let start = hoverWeights
+        let end = config.modules.indices.map { CGFloat($0 == hovered && $0 != morphingIndex ? 1 : 0) }
+        hoverAnimator.animate(duration: 0.16) { [weak self] t in
+            guard let self else { return }
+            self.hoverWeights = zip(start, end).map { $0 + ($1 - $0) * t }
+            for index in self.ballHosts.indices {
+                self.ballHosts[index].rootView = GlassOrb(moduleID: self.config.modules[index].id,
+                                                       emphasis: self.hoverWeights[index])
+            }
+            self.updateLayout()
+            self.needsDisplay = true
+        }
     }
 
     private func animateSelection() {
         let previousExtra = detailExtra
         selectionOrigin = selected != nil && morphingIndex != nil ? pillHost?.frame : nil
         detailAnimator.cancel()
-        timelineSqueeze = 1
+        orbPress = 1
+        if selected != nil { hovered = nil }
         detailExtra = 0
         store.setReminderExpanded(false)
         systemApps.setExpanded("notes", false)
@@ -1318,6 +1375,8 @@ final class BallView: NSView {
                     if module.id == "music" { self.systemApps.setMusicPinned(false) }
                     self.selected = nil
                 }))
+            host.wantsLayer = true
+            host.layer?.masksToBounds = true
             pillHost = host
             addSubview(host)
             if let hintsHost { addSubview(hintsHost, positioned: .below, relativeTo: host) }
@@ -1326,12 +1385,12 @@ final class BallView: NSView {
         }
         let start = pillProgress
         let end: CGFloat = selected == nil ? 0 : 1
-        let timelineOpening = selected.map { config.modules[$0].id == "timeline" } == true && selectionOrigin == nil
-        pillAnimator.animate(duration: timelineOpening ? 0.42 : selectionOrigin == nil ? 0.28 : 0.22,
-                             timing: timelineOpening ? { CGFloat($0) } : nil) { [weak self] t in
+        let orbOpening = selected != nil && selectionOrigin == nil
+        pillAnimator.animate(duration: orbOpening ? 0.36 : selectionOrigin == nil ? 0.28 : 0.26,
+                             timing: orbOpening ? { CGFloat($0) } : nil) { [weak self] t in
             guard let self else { return }
-            let travel = timelineOpening ? CGFloat(TimelineMotion.smooth((Double(t) - 0.08) / 0.92)) : t
-            self.timelineSqueeze = timelineOpening ? 1 - 0.08 * sin(min(1, t / 0.20) * .pi) : 1
+            let travel = orbOpening ? CGFloat(CapsuleMotion.smooth((Double(t) - 0.06) / 0.94)) : t
+            self.orbPress = orbOpening ? 1 - 0.06 * sin(min(1, t / 0.22) * .pi) : 1
             self.pillProgress = start + (end - start) * travel
             self.updateLayout()
         } completion: { [weak self] in
@@ -1407,7 +1466,7 @@ final class BallView: NSView {
             let width = (title as NSString).size(withAttributes: [
                 .font: NSFont.systemFont(ofSize: 11, weight: .medium)
             ]).width
-            text(title, size: 11, weight: .medium, color: .labelColor,
+            text(title, size: 11, weight: .medium, color: .labelColor.withAlphaComponent(hoverWeights[hovered]),
                  at: CGPoint(x: rect.midX - width / 2, y: rect.maxY + 10))
         }
     }

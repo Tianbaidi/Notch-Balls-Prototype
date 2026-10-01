@@ -473,7 +473,7 @@ struct TimelineCapsule: View {
             HStack(spacing: 6) {
                 Button { store.setLevel(store.level + 1) } label: {
                     HStack(spacing: 5) {
-                        Image(systemName: "timeline.selection")
+                        CapsuleGlyph(moduleID: "timeline", size: 22)
                         Text("时间轴").font(.system(size: 11, weight: .semibold))
                         if store.level < 3 { Image(systemName: "chevron.down").font(.system(size: 9)) }
                     }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
@@ -525,7 +525,7 @@ struct TimelineCapsule: View {
 
     private func control(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { Image(systemName: symbol).font(.system(size: 10, weight: .semibold)).frame(width: 24, height: 25) }
-            .buttonStyle(CapsuleButtonStyle()).help(label).accessibilityLabel(label)
+            .buttonStyle(CapsuleButtonStyle(subtle: true)).help(label).accessibilityLabel(label)
     }
 }
 
@@ -772,12 +772,12 @@ private struct TimelineTrack: View {
                     }
                 }
                 let head = width * progress
-                Rectangle().fill(.white.opacity(0.9)).frame(width: 1, height: 29).offset(x: head, y: 15)
+                Rectangle().fill(.primary.opacity(0.85)).frame(width: 1, height: 29).offset(x: head, y: 15)
                     .allowsHitTesting(false)
                 Circle().fill(.white.opacity(phase > 0.82 && phase < 1 ? (1 - phase) * 2.5 : 0))
                     .frame(width: 12, height: 12).blur(radius: 3).offset(x: head - 5, y: 9)
                     .allowsHitTesting(false)
-                Rectangle().fill(.white).frame(width: 5, height: 5).rotationEffect(.degrees(45))
+                Rectangle().fill(.primary).frame(width: 5, height: 5).rotationEffect(.degrees(45))
                     .offset(x: head - 2, y: 12).allowsHitTesting(false)
                 if phase < 1 && phase > 0.02 {
                     let touching = events.first { abs(position($0.start, in: interval) - progress * TimelineMotion.fillPhase(phase)) < 0.025 }
