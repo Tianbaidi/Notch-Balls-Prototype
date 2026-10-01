@@ -2,6 +2,31 @@
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
   <channel>
     <item>
+      <title>Notch Balls Prototype 0.40 — 未公证测试版 / Unnotarized test</title>
+      <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.40</link>
+      <sparkle:version>40</sparkle:version>
+      <sparkle:shortVersionString>0.40</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <sparkle:minimumAutoupdateVersion>40</sparkle:minimumAutoupdateVersion>
+      <pubDate>Thu, 01 Oct 2026 10:38:09 +0000</pubDate>
+      <description sparkle:format="plain-text">未公证测试版（Unnotarized test build）。仅用于现有安装的更新验证，不是正式公开版；未通过 Developer ID 签名或 Apple 公证。
+
+0.40 · 统一小球与胶囊外观
+
+- 提醒事项、便笺、音乐、时间轴、番茄钟统一柔和配色、顶部高光和细边缘；小球图标随尺寸调整。
+- 悬停平滑放大并轻抬，点击轻压后展开；展开、收起与模块切换使用一致的节奏，切换时胶囊不再闪空。
+- 统一标题图标、按钮反馈、输入框和内容卡片；收细彩色边框，静置后停止边框装饰刷新。
+- 音乐播放按钮与进度条使用模块色，歌名和歌词继续保持固定区域。
+- 时间轴改用日历轨道图标，当前位置标记在浅色和深色下均清晰可见。
+- 保留减少动态效果、减少透明度及低电量模式的适配。
+
+已通过真实组件的模拟数据界面渲染、快速悬停与切换检查、既有歌词和日历逻辑回归检查，以及发布流程单元测试。未下载或安装更新包，实际安装体验由使用者检查。
+
+本版本使用临时代码签名与 Sparkle Ed25519 签名，未经 Developer ID 签名或 Apple 公证，不是正式公开版。</description>
+      <enclosure url="https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/download/v0.40/Notch-Balls-Prototype-0.40-macOS-arm64.zip" length="8287727" type="application/octet-stream" sparkle:edSignature="HmavkVrpRm9vqCE3hTiCC3nJWEbxllC6i013f8ng9JuvbPKuSIvdkNDmJFDcRHjml9IXaPHxAZVxJYq3NWoDDA==" />
+    </item>
+    <item>
       <title>Notch Balls Prototype 0.39 — 未公证测试版 / Unnotarized test</title>
       <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.39</link>
       <sparkle:version>39</sparkle:version>
