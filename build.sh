@@ -68,6 +68,7 @@ cp "$NB_INFO_PATH" "$APP/Contents/Info.plist"
 ditto vendor/Sparkle.framework "$APP/Contents/Frameworks/Sparkle.framework"
 cp scene.json now-playing.jxa white-noise.wav deep-noise.wav audio/rain.wav audio/ocean.wav audio/stream.wav "$APP/Contents/Resources/"
 cp audio/CREDITS.md "$APP/Contents/Resources/AUDIO-CREDITS.md"
+cp assets/app-icon-v2/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 ./scripts/sign-app.sh "$APP"
 # Only replace the known build output after compilation and signing succeed.
 NB_OUTPUT_APP='Notch Balls Prototype.app'
