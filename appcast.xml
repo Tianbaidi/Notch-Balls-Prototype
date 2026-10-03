@@ -2,6 +2,26 @@
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
   <channel>
     <item>
+      <title>Notch Balls Prototype 0.41 — 未公证测试版 / Unnotarized test</title>
+      <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.41</link>
+      <sparkle:version>41</sparkle:version>
+      <sparkle:shortVersionString>0.41</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <sparkle:minimumAutoupdateVersion>41</sparkle:minimumAutoupdateVersion>
+      <pubDate>Sat, 03 Oct 2026 01:45:43 +0000</pubDate>
+      <description sparkle:format="plain-text">未公证测试版（Unnotarized test build）。仅用于现有安装的更新验证，不是正式公开版；未通过 Developer ID 签名或 Apple 公证。
+
+0.41 · 浅色应用图标
+
+替换为已选定的浅色图标：圆角底板、蓝色胶囊与青蓝双小球。图标包含完整的 macOS 多尺寸资源，并已接入应用构建，后续更新持续保留。
+
+已验证本地应用包中的图标引用、资源内容与代码签名。未下载或安装更新包，实际更新由使用者检查。
+
+本版本使用临时代码签名与 Sparkle Ed25519 签名，未经 Developer ID 签名或 Apple 公证，不是正式公开版。</description>
+      <enclosure url="https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/download/v0.41/Notch-Balls-Prototype-0.41-macOS-arm64.zip" length="9617231" type="application/octet-stream" sparkle:edSignature="ndzsmEVCgmM5QKBRPetUSMZNMXsjoMhg7eAQKDb4lUnCzMGvOau0E9hZXGL92LxceO9vAaSeZclPTF+fHBkwCA==" />
+    </item>
+    <item>
       <title>Notch Balls Prototype 0.40 — 未公证测试版 / Unnotarized test</title>
       <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.40</link>
       <sparkle:version>40</sparkle:version>
