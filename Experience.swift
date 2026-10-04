@@ -83,14 +83,67 @@ enum CapsuleMotion {
     }
 }
 
+/// Native menus own pointer tracking; overlay work resumes after the last submenu closes.
+struct MenuTrackingState {
+    private(set) var depth = 0
+    var isActive: Bool { depth > 0 }
+    mutating func begin() { depth += 1 }
+    @discardableResult mutating func end() -> Bool {
+        guard depth > 0 else { return false }
+        depth -= 1
+        return depth == 0
+    }
+}
+
+struct CapsuleInkPalette {
+    var lightFraction: Double
+    var primary: Color { Color(white: 0.10 + 0.85 * lightFraction) }
+    var secondary: Color { primary.opacity(0.68) }
+    var nsColor: NSColor { NSColor(white: 0.10 + 0.85 * lightFraction, alpha: 1) }
+}
+
+private struct CapsuleInkKey: EnvironmentKey {
+    static let defaultValue: CapsuleInkPalette? = nil
+}
+extension EnvironmentValues {
+    var capsuleInk: CapsuleInkPalette? {
+        get { self[CapsuleInkKey.self] }
+        set { self[CapsuleInkKey.self] = newValue }
+    }
+}
+
+final class CapsuleForeground: ObservableObject {
+    @Published private(set) var lightFraction: Double
+    @Published var tracksBackdrop = false
+    private var target: Bool
+    private let animator = CapsuleAnimator()
+    var palette: CapsuleInkPalette { CapsuleInkPalette(lightFraction: lightFraction) }
+
+    init(isDark: Bool = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua) {
+        target = isDark
+        lightFraction = isDark ? 1 : 0
+    }
+
+    func adapt(isDark: Bool, animated: Bool = true) {
+        guard target != isDark || !animated else { return }
+        target = isDark
+        let start = lightFraction
+        let end: Double = isDark ? 1 : 0
+        animator.animate(duration: animated ? 0.26 : 0) { [weak self] progress in
+            self?.lightFraction = start + (end - start) * Double(progress)
+        }
+    }
+}
+
 struct CapsuleButtonStyle: ButtonStyle {
     var prominent = false
     var subtle = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isEnabled) private var enabled
+    @Environment(\.capsuleInk) private var ink
     func makeBody(configuration: Configuration) -> some View {
         Surface(configuration: configuration, prominent: prominent, subtle: subtle,
-                reduceMotion: reduceMotion, enabled: enabled)
+                reduceMotion: reduceMotion, enabled: enabled, ink: ink)
     }
     private struct Surface: View {
         let configuration: ButtonStyleConfiguration
@@ -98,10 +151,11 @@ struct CapsuleButtonStyle: ButtonStyle {
         let subtle: Bool
         let reduceMotion: Bool
         let enabled: Bool
+        let ink: CapsuleInkPalette?
         @State private var hovered = false
         var body: some View {
             configuration.label
-                .foregroundStyle(prominent ? Color.black.opacity(0.85) : Color.primary)
+                .foregroundStyle(prominent ? Color.black.opacity(0.85) : ink?.primary ?? Color.primary)
                 .background {
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .fill(prominent ? Color.accentColor.opacity(configuration.isPressed ? 0.74 : hovered ? 0.98 : 0.90)

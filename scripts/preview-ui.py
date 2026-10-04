@@ -7,7 +7,7 @@ import tempfile
 root = Path(__file__).resolve().parent.parent
 output = root / 'build/ui-previews'
 output.mkdir(parents=True, exist_ok=True)
-files = ['Timeline.swift', 'Experience.swift', 'Pomodoro.swift', 'FocusStats.swift', 'SystemApps.swift',
+files = ['Timeline.swift', 'Experience.swift', 'BackdropContrast.swift', 'Pomodoro.swift', 'FocusStats.swift', 'SystemApps.swift',
          'NowPlaying.swift', 'LyricsSources.swift', 'ArtistAliases.swift', 'DockPlacement.swift']
 source = '\n'.join((root / name).read_text() for name in files)
 source += '\n' + (root / 'main.swift').read_text().split('\nlet app = NSApplication.shared')[0]
@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory(prefix='notch-ui-') as temp:
     subprocess.run(['xcrun', 'swiftc', '-module-cache-path', '/private/tmp/notch-balls-swift-cache',
                     '-target', 'arm64-apple-macosx14.0', str(entry), '-o', str(binary),
                     '-F', str(root / 'vendor'), '-framework', 'Sparkle', '-framework', 'AppKit',
-                    '-framework', 'AVFoundation', '-lsqlite3', '-Xlinker', '-rpath', '-Xlinker',
+                    '-framework', 'AVFoundation', '-framework', 'ScreenCaptureKit', '-lsqlite3', '-Xlinker', '-rpath', '-Xlinker',
                     str(root / 'vendor')], check=True)
     subprocess.run([str(binary), str(output)], check=True)
 try:

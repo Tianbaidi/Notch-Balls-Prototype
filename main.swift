@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Combine
 import EventKit
 import Sparkle
 
@@ -228,28 +229,50 @@ final class CapsuleInteraction: ObservableObject {
 }
 
 @available(macOS 26.0, *)
+private final class CapsuleGlassBacking: NSView {
+    let light = NSGlassEffectView()
+    let dark = NSGlassEffectView()
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        for (glass, name) in [(light, NSAppearance.Name.aqua), (dark, .darkAqua)] {
+            glass.contentView = NSView()
+            glass.appearance = NSAppearance(named: name)
+            glass.autoresizingMask = [.width, .height]
+            addSubview(glass)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func layout() {
+        super.layout()
+        light.frame = bounds
+        dark.frame = bounds
+    }
+}
+
+@available(macOS 26.0, *)
 private struct NativePillGlass: NSViewRepresentable {
     let clearPassThrough: Bool
     let corner: CGFloat
+    var lightFraction: Double = 0
 
-    func makeNSView(context: Context) -> NSGlassEffectView {
-        let glass = NSGlassEffectView()
-        // Keep live text/control updates outside the native material subtree.
-        glass.contentView = NSView()
+    func makeNSView(context: Context) -> CapsuleGlassBacking {
+        let glass = CapsuleGlassBacking()
         configure(glass)
         return glass
     }
 
-    func updateNSView(_ glass: NSGlassEffectView, context: Context) { configure(glass) }
+    func updateNSView(_ glass: CapsuleGlassBacking, context: Context) { configure(glass) }
 
-    fileprivate func configure(_ glass: NSGlassEffectView) {
-        glass.style = clearPassThrough ? .clear : .regular
-        glass.tintColor = nil
-        glass.cornerRadius = corner
-        // System clear glass can adapt its body tint. Limit only the backing layer,
-        // so even an opaque adapted tint can't cover the application underneath.
-        glass.alphaValue = clearPassThrough ? 0.22 : 1
-        if #available(macOS 27.0, *) { glass.effectIsInteractive = !clearPassThrough }
+    fileprivate func configure(_ backing: CapsuleGlassBacking) {
+        // Crossfade only the backing materials; content keeps its identity and full opacity.
+        let fraction = min(1, max(0, lightFraction))
+        for (glass, weight) in [(backing.light, 1 - fraction), (backing.dark, fraction)] {
+            glass.style = clearPassThrough ? .clear : .regular
+            glass.tintColor = nil
+            glass.cornerRadius = corner
+            glass.alphaValue = (clearPassThrough ? 0.22 : 1) * weight
+            if #available(macOS 27.0, *) { glass.effectIsInteractive = !clearPassThrough }
+        }
     }
 }
 
@@ -425,6 +448,7 @@ private struct GlassPill: View {
     private var accent: Color { CapsuleTheme.accent(module.id) }
     private var clearPassThrough: Bool { locked && !interaction.controlsArmed }
     @State private var surfaceHovered = false
+    @ObservedObject var foreground = CapsuleForeground()
 
     var body: some View {
         let detailOpen = (module.id == "reminders" && store.reminderExpanded)
@@ -435,29 +459,34 @@ private struct GlassPill: View {
         let corner: CGFloat = detailOpen ? 22 : 18
         ZStack {
             if reduceTransparency {
-                RoundedRectangle(cornerRadius: corner).fill(Color(nsColor: .windowBackgroundColor))
+                RoundedRectangle(cornerRadius: corner).fill(Color(white: 0.95 - 0.83 * foreground.lightFraction))
             } else if #available(macOS 26.0, *) {
-                NativePillGlass(clearPassThrough: clearPassThrough, corner: corner)
+                NativePillGlass(clearPassThrough: clearPassThrough, corner: corner, lightFraction: foreground.lightFraction)
                     .id(interaction.backdropRevision)
                     .allowsHitTesting(false)
             } else {
                 if clearPassThrough {
-                    RoundedRectangle(cornerRadius: corner).fill(.white.opacity(0.06))
+                    RoundedRectangle(cornerRadius: corner).fill(Color(white: 1 - foreground.lightFraction).opacity(0.06))
                 } else {
                     RoundedRectangle(cornerRadius: corner).fill(.ultraThinMaterial)
+                        .environment(\.colorScheme, .light).opacity(1 - foreground.lightFraction)
+                    RoundedRectangle(cornerRadius: corner).fill(.ultraThinMaterial)
+                        .environment(\.colorScheme, .dark).opacity(foreground.lightFraction)
                 }
             }
             RoundedRectangle(cornerRadius: corner, style: .continuous)
-                .fill(LinearGradient(colors: [.white.opacity(clearPassThrough ? 0 : colorScheme == .dark ? 0.025 : 0.12),
+                .fill(LinearGradient(colors: [.white.opacity(clearPassThrough ? 0 : 0.12 - 0.095 * foreground.lightFraction),
                                               .clear, accent.opacity(clearPassThrough ? 0 : 0.018)],
                                      startPoint: .topLeading, endPoint: .bottomTrailing))
                 .allowsHitTesting(false)
             content.padding(.horizontal, detailOpen ? 16 : 10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: detailOpen && module.id != "music" ? .topLeading : .center)
-                .environment(\.colorScheme, clearPassThrough && !reduceTransparency ? .dark : colorScheme)
+                .foregroundStyle(foreground.palette.primary)
+                .environment(\.capsuleInk, foreground.palette)
                 .tint(accent)
                 .accentColor(accent)
-                .shadow(color: .black.opacity(clearPassThrough ? 0.5 : 0), radius: 1.5, y: 0.5)
+                .shadow(color: Color(white: 1 - foreground.lightFraction)
+                    .opacity(clearPassThrough ? 0.18 : 0), radius: 1, y: 0.5)
                 .clipShape(RoundedRectangle(cornerRadius: corner))
         }
         .overlay {
@@ -471,6 +500,12 @@ private struct GlassPill: View {
         .contentShape(RoundedRectangle(cornerRadius: corner))
         .animation(reduceMotion ? nil : .easeOut(duration: 0.20), value: clearPassThrough)
         .onHover { surfaceHovered = $0 }
+        .onAppear {
+            if !foreground.tracksBackdrop { foreground.adapt(isDark: colorScheme == .dark, animated: false) }
+        }
+        .onChange(of: colorScheme) { _, scheme in
+            if !foreground.tracksBackdrop { foreground.adapt(isDark: scheme == .dark) }
+        }
         .accessibilityValue(locked ? (clearPassThrough ? "已锁定，点击穿透" : "已锁定，可操作") : "可操作")
         // One AppKit animator controls shell geometry for every module.
     }
@@ -654,7 +689,7 @@ private struct GlassPill: View {
                                 .padding(10).modifier(CapsuleCard(accent: accent, corner: 9))
                                 .onSubmit { pomodoro.start() }
                             Text(pomodoro.nameError ? "先写下一个小目标，再开始" : "输入目标，按回车开始")
-                                .font(.system(size: 10)).foregroundStyle(pomodoro.nameError ? accent : .secondary)
+                                .font(.system(size: 10)).foregroundStyle(pomodoro.nameError ? accent : foreground.palette.secondary)
                         }
                         Button { pomodoro.toggleRunning() } label: {
                             Label(pomodoro.isRunning ? "暂停" : pomodoro.isSessionActive ? "继续" : "开始专注",
@@ -1127,6 +1162,14 @@ final class BallView: NSView {
     let pomodoro: PomodoroModel
     let timeline: TimelineStore
     let interaction = CapsuleInteraction()
+    let foreground = CapsuleForeground()
+    private var inkObservation: AnyCancellable?
+    var contrastRect: CGRect? {
+        guard reveal > 0.2 else { return nil }
+        if let pillHost, !pillHost.isHidden, pillProgress > 0.9 { return pillHost.frame }
+        if let hovered { return visualBallRect(for: hovered).insetBy(dx: -32, dy: -18) }
+        return nil
+    }
     var lockedCapsule: Bool {
         guard let selected else { return false }
         let id = config.modules[selected].id
@@ -1165,6 +1208,7 @@ final class BallView: NSView {
         self.timeline = timeline
         super.init(frame: frame)
         wantsLayer = true
+        inkObservation = foreground.objectWillChange.sink { [weak self] in self?.needsDisplay = true }
         store.reminderExpansionChanged = { [weak self] expanded in
             self?.animateDetail(expanded, extra: 320)
         }
@@ -1187,6 +1231,12 @@ final class BallView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override var isFlipped: Bool { true }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        if !foreground.tracksBackdrop {
+            foreground.adapt(isDark: effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+        }
+    }
 
     private var columns: Int { min(config.maxColumns, max(1, config.modules.count)) }
     private var rows: Int { (config.modules.count + columns - 1) / columns }
@@ -1374,7 +1424,7 @@ final class BallView: NSView {
                     self.interaction.setPinned(module.id, false)
                     if module.id == "music" { self.systemApps.setMusicPinned(false) }
                     self.selected = nil
-                }))
+                }, foreground: foreground))
             host.wantsLayer = true
             host.layer?.masksToBounds = true
             pillHost = host
@@ -1466,17 +1516,25 @@ final class BallView: NSView {
             let width = (title as NSString).size(withAttributes: [
                 .font: NSFont.systemFont(ofSize: 11, weight: .medium)
             ]).width
-            text(title, size: 11, weight: .medium, color: .labelColor.withAlphaComponent(hoverWeights[hovered]),
+            text(title, size: 11, weight: .medium, color: foreground.palette.nsColor.withAlphaComponent(hoverWeights[hovered]),
                  at: CGPoint(x: rect.midX - width / 2, y: rect.maxY + 10))
         }
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let config = SceneConfig.load()
-    private let moduleStore = ModuleStore()
-    private let systemApps = SystemAppsStore()
-    private let pomodoro = PomodoroModel()
+    private let config: SceneConfig
+    private let moduleStore: ModuleStore
+    private let systemApps: SystemAppsStore
+    private let pomodoro: PomodoroModel
+    init(config: SceneConfig = .load(), moduleStore: ModuleStore = ModuleStore(),
+         systemApps: SystemAppsStore = SystemAppsStore(), pomodoro: PomodoroModel = PomodoroModel()) {
+        self.config = config
+        self.moduleStore = moduleStore
+        self.systemApps = systemApps
+        self.pomodoro = pomodoro
+        super.init()
+    }
     private var timeline: TimelineStore!
     private var trigger: NSPanel!
     private var overlay: NSPanel!
@@ -1498,6 +1556,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var wasSessionActive = false
     private var lyricInteractionCount = 0
     private var menuObservers: [NSObjectProtocol] = []
+    private var menuTracking = MenuTrackingState()
+    private var backdrop: BackdropContrastStore!
+    private var backdropMenuItem: NSMenuItem!
+    private var backdropPermissionItem: NSMenuItem!
     private var placementObservers: [NSObjectProtocol] = []
     private var workspaceObservers: [NSObjectProtocol] = []
     private var placementTimer: Timer?
@@ -1556,6 +1618,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.updatePlacement(refreshFullscreen: false)
         }
+        backdrop = BackdropContrastStore(foreground: balls.foreground)
+        backdrop.region = { [weak self] in self?.backdropRegion() }
+        backdrop.statusChanged = { [weak self] in self?.refreshBackdropMenu() }
 
         (overlay as? NotchPanel)?.escapeAction = { [weak self] in
             guard let self else { return }
@@ -1568,6 +1633,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.scheduleCollapse()
         }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         statusItem.button?.setAccessibilityLabel("Notch Balls Prototype")
         statusItem.button?.toolTip = "Notch Balls · 提醒、便笺、音乐与专注"
         let menu = NSMenu()
@@ -1632,6 +1698,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsMenu.addItem(autoNoiseItem)
         settingsItem.submenu = settingsMenu
         menu.addItem(settingsItem)
+        backdropMenuItem = NSMenuItem(title: "背景明暗适配", action: #selector(toggleBackdrop), keyEquivalent: "")
+        backdropMenuItem.toolTip = "仅在本机分析胶囊下方的小范围亮度，不保存或上传图像。"
+        menu.addItem(backdropMenuItem)
+        backdropPermissionItem = NSMenuItem(title: "授权背景适配…", action: #selector(openBackdropPermission), keyEquivalent: "")
+        menu.addItem(backdropPermissionItem)
         menu.addItem(.separator())
         let updatesItem = NSMenuItem(
             title: updaterController == nil ? "检查更新（等待更新清单发布）" : "检查更新…",
@@ -1652,10 +1723,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menuObservers = [
             NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
-                self?.setLyricInteraction(true)
+                self?.beginMenuTracking()
             },
             NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
-                self?.setLyricInteraction(false)
+                self?.endMenuTracking()
             }
         ]
         pomodoro.statusChanged = { [weak self] in
@@ -1663,6 +1734,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         updateMenuBar()
         refreshSettingsChecks()
+        refreshBackdropMenu()
         startPlacementMonitoring()
         systemApps.setMusicPinned(balls.interaction.isPinned("music"))
         if let index = preferredPinnedIndex() {
@@ -1681,6 +1753,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var anchorScreen: NSScreen? {
         NSScreen.screens.first { $0.safeAreaInsets.top > 0 || $0.localizedName.contains("Built-in") }
             ?? NSScreen.main ?? NSScreen.screens.first
+    }
+
+    private func backdropRegion() -> BackdropRegion? {
+        guard let screen = anchorScreen, overlay.isVisible, let rect = balls.contrastRect,
+              let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
+        let frame = overlay.convertToScreen(balls.convert(rect, to: nil)).intersection(screen.frame)
+        guard !frame.isNull, !frame.isEmpty else { return nil }
+        return BackdropRegion(frame: frame, screenFrame: screen.frame, displayID: number.uint32Value,
+            excludedWindows: [CGWindowID(overlay.windowNumber), CGWindowID(trigger.windowNumber)])
+    }
+
+    private func refreshBackdropMenu() {
+        guard !menuTracking.isActive, backdropMenuItem != nil else { return }
+        backdropMenuItem.state = backdrop.enabled ? .on : .off
+        backdropPermissionItem.title = backdrop.ready ? "背景适配已授权" : "授权背景适配…"
+        backdropPermissionItem.isEnabled = !backdrop.ready
+    }
+
+    @objc private func toggleBackdrop() { backdrop.setEnabled(!backdrop.enabled) }
+    @objc private func openBackdropPermission() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     private func startPlacementMonitoring() {
@@ -1738,6 +1833,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updatePlacement(refreshFullscreen: Bool) {
+        guard !menuTracking.isActive else { return }
         guard let screen = anchorScreen, let overlay, let balls, let trigger else { return }
         if refreshFullscreen {
             let nextFullscreen = detectFullscreen(on: screen)
@@ -1774,6 +1870,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updatePointerRouting() {
+        guard !menuTracking.isActive else { return }
         guard let overlay, let balls, let trigger else { return }
         balls.refreshLongBreakHints()
         let pointer = NSEvent.mouseLocation
@@ -1819,6 +1916,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshSettingsChecks() {
+        guard !menuTracking.isActive else { return }
         for item in focusPresetItems {
             item.state = item.tag == pomodoro.settings.focusMinutes ? .on : .off
         }
@@ -1839,9 +1937,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateMenuBar() {
-        statusItem.button?.title = pomodoro.isRunning ? "● \(pomodoro.timeText)" : "●"
-        statsMenuItem.title = "今日专注 \(pomodoro.today.sessions) 次 · \(pomodoro.today.seconds / 60) 分 \(pomodoro.today.seconds % 60) 秒"
-        endSessionMenuItem.isEnabled = pomodoro.isSessionActive
+        guard !menuTracking.isActive else { return }
+        let title = pomodoro.isRunning ? "● \(pomodoro.timeText)" : "●"
+        if statusItem.button?.title != title { statusItem.button?.title = title }
+        let summary = "今日专注 \(pomodoro.today.sessions) 次 · \(pomodoro.today.seconds / 60) 分 \(pomodoro.today.seconds % 60) 秒"
+        if statsMenuItem.title != summary { statsMenuItem.title = summary }
+        if endSessionMenuItem.isEnabled != pomodoro.isSessionActive { endSessionMenuItem.isEnabled = pomodoro.isSessionActive }
     }
 
     private func pomodoroStatusChanged() {
@@ -1959,6 +2060,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pomodoro.setAmbient(false)
         placementTimer?.invalidate()
         pointerTimer?.invalidate()
+        backdrop?.stop()
         mouseMonitors.forEach(NSEvent.removeMonitor)
         workspaceObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
         placementObservers.forEach(NotificationCenter.default.removeObserver)
@@ -1977,6 +2079,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lyricInteractionCount = max(0, lyricInteractionCount + (active ? 1 : -1))
         if lyricInteractionCount > 0 { collapseWork?.cancel() }
         else if !pointerInsideOverlay { scheduleCollapse() }
+    }
+
+    private func beginMenuTracking() {
+        menuTracking.begin()
+        backdrop?.paused = true
+        setLyricInteraction(true)
+        collapseWork?.cancel()
+        pointerDragging = false
+        balls?.hovered = nil
+        overlay?.ignoresMouseEvents = true
+    }
+
+    private func endMenuTracking() {
+        guard menuTracking.isActive else { return }
+        let finished = menuTracking.end()
+        setLyricInteraction(false)
+        guard finished else { return }
+        backdrop?.paused = false
+        updateMenuBar()
+        refreshSettingsChecks()
+        refreshBackdropMenu()
+        updatePlacement(refreshFullscreen: true)
     }
 
     private func preferredPinnedIndex() -> Int? {

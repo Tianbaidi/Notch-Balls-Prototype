@@ -1,5 +1,6 @@
 // Compiled only by scripts/preview-ui.py, together with production views.
 // All content below is synthetic. No reminders, notes or player queries are run.
+setbuf(stdout, nil)
 let previewApp = NSApplication.shared
 previewApp.setActivationPolicy(.prohibited)
 let previewSuite = "notch-preview-\(UUID().uuidString)"
@@ -519,3 +520,165 @@ motionBalls.selected = nil
 RunLoop.main.run(until: Date().addingTimeInterval(0.35))
 assert(motionBalls.previewPillFrame == nil && motionBalls.previewPillAlpha == nil)
 print("PASS: smooth hover interruption and module switch preserves visible shell")
+
+// Exercise production menu refresh paths using injected synthetic stores.
+extension AppDelegate {
+    func prepareTrackingPreview() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.title = "snapshot"
+        statsMenuItem = NSMenuItem(title: "snapshot", action: nil, keyEquivalent: "")
+        endSessionMenuItem = NSMenuItem(title: "end", action: nil, keyEquivalent: "")
+        autoNoiseItem = NSMenuItem(title: "noise", action: nil, keyEquivalent: "")
+        pointerInsideOverlay = true
+    }
+    var trackingTitle: String { statusItem.button?.title ?? "" }
+    var trackingSummary: String { statsMenuItem.title }
+    func openTrackingPreview() { beginMenuTracking() }
+    func closeTrackingPreview() { endMenuTracking() }
+    func tickTrackingPreview() {
+        updateMenuBar(); refreshSettingsChecks(); updatePlacement(refreshFullscreen: true); updatePointerRouting()
+    }
+    func finishTrackingPreview() { NSStatusBar.system.removeStatusItem(statusItem) }
+}
+let trackingDelegate = AppDelegate(config: testConfig, moduleStore: previewStore,
+    systemApps: previewSystem, pomodoro: previewPomodoro)
+trackingDelegate.prepareTrackingPreview()
+trackingDelegate.openTrackingPreview()
+trackingDelegate.openTrackingPreview()
+for _ in 0..<120 { trackingDelegate.tickTrackingPreview() }
+assert(trackingDelegate.trackingTitle == "snapshot" && trackingDelegate.trackingSummary == "snapshot")
+trackingDelegate.closeTrackingPreview()
+assert(trackingDelegate.trackingTitle == "snapshot")
+trackingDelegate.closeTrackingPreview()
+assert(trackingDelegate.trackingTitle != "snapshot" && trackingDelegate.trackingSummary != "snapshot")
+trackingDelegate.closeTrackingPreview()
+trackingDelegate.finishTrackingPreview()
+print("PASS: native menu tracking freezes status/menu mutations across nested submenus and resumes once")
+
+var tone = BackdropTone()
+assert(tone.ingest(0.9, time: 0) == false)
+assert(tone.ingest(0.17, time: 1) == nil)
+assert(tone.ingest(0.03, time: 2) == nil)
+assert(tone.ingest(0.17, time: 2.1) == nil)
+assert(tone.ingest(0.03, time: 3) == nil)
+assert(tone.ingest(0.03, time: 3.3) == true)
+assert(tone.ingest(0.20, time: 4) == nil)
+assert(tone.ingest(0.90, time: 5) == nil)
+assert(tone.ingest(0.90, time: 5.3) == false)
+assert(tone.ingest(.nan, time: 6) == nil)
+let negativeScreen = BackdropRegion(frame: CGRect(x: -950, y: 870, width: 400, height: 40),
+    screenFrame: CGRect(x: -1000, y: 0, width: 1000, height: 1000), displayID: 0, excludedWindows: [])
+assert(negativeScreen.sourceRect == CGRect(x: 50, y: 90, width: 400, height: 40))
+func solidBackdrop(_ color: CGColor) -> CGImage {
+    let context = CGContext(data: nil, width: 16, height: 16, bitsPerComponent: 8, bytesPerRow: 64,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    context.setFillColor(color); context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
+    return context.makeImage()!
+}
+assert(BackdropTone.luminance(of: solidBackdrop(CGColor(gray: 1, alpha: 1)))! > 0.99)
+assert(BackdropTone.luminance(of: solidBackdrop(CGColor(gray: 0, alpha: 1)))! < 0.01)
+let sRGBRed = CGColor(colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, components: [1, 0, 0, 1])!
+assert(abs(BackdropTone.luminance(of: solidBackdrop(sRGBRed))! - 0.2126) < 0.005)
+assert(BackdropTone.luminance(of: solidBackdrop(CGColor(gray: 0, alpha: 0))) == nil)
+let ink = CapsuleForeground(isDark: false)
+ink.adapt(isDark: true)
+assert(ink.lightFraction == 0)
+RunLoop.main.run(until: Date().addingTimeInterval(0.12))
+assert(ink.lightFraction > 0 && ink.lightFraction < 1)
+let interruptedInk = ink.lightFraction
+ink.adapt(isDark: false)
+assert(ink.lightFraction == interruptedInk)
+RunLoop.main.run(until: Date().addingTimeInterval(0.32))
+assert(abs(ink.lightFraction) < 0.001)
+print("PASS: real pixel luminance, secondary-display coordinates, hysteresis and interruptible text color interpolation")
+
+// Permission, pause, revocation and late captures are simulated; never capture a real screen.
+var backdropTestsDone = false
+Task { @MainActor in
+    let permissions = UserDefaults(suiteName: "notch-backdrop-tests-\(UUID().uuidString)")!
+    var authorized = false, requests = 0, captures = 0
+    let sampler = BackdropContrastStore(foreground: ink, defaults: permissions, startTimer: false,
+        authorization: { authorized }, requestAuthorization: { requests += 1; return false },
+        capture: { _ in captures += 1; return 0.95 })
+    sampler.region = { negativeScreen }
+    await sampler.sampleNow(); await sampler.sampleNow()
+    assert(requests == 1 && captures == 0 && sampler.enabled)
+    authorized = true
+    sampler.paused = true
+    await sampler.sampleNow()
+    assert(captures == 0)
+    sampler.paused = false
+    await sampler.sampleNow()
+    assert(captures == 1 && requests == 1 && sampler.ready && ink.tracksBackdrop)
+    try? await Task.sleep(nanoseconds: 450_000_000)
+    authorized = false
+    await sampler.sampleNow()
+    assert(!sampler.ready && !ink.tracksBackdrop && sampler.enabled && requests == 1)
+    sampler.setEnabled(false)
+    let restored = BackdropContrastStore(foreground: ink, defaults: permissions, startTimer: false,
+        authorization: { false }, requestAuthorization: { fatalError("Disabled preference must not prompt") },
+        capture: { _ in fatalError("Disabled preference must not capture") })
+    assert(!restored.enabled)
+    restored.region = { negativeScreen }
+    await restored.sampleNow()
+
+    let grantedDefaults = UserDefaults(suiteName: "notch-backdrop-granted-\(UUID().uuidString)")!
+    var pendingCapture: CheckedContinuation<Double?, Error>?
+    let late = BackdropContrastStore(foreground: ink, defaults: grantedDefaults, startTimer: false,
+        authorization: { true }, requestAuthorization: { fatalError("Existing grant must be reused") },
+        capture: { _ in try await withCheckedThrowingContinuation { pendingCapture = $0 } })
+    late.region = { negativeScreen }
+    let pendingTask = Task { @MainActor in await late.sampleNow() }
+    while pendingCapture == nil { await Task.yield() }
+    late.setEnabled(false)
+    pendingCapture!.resume(returning: 0.01)
+    await pendingTask.value
+    assert(!ink.tracksBackdrop && !late.enabled)
+    late.setEnabled(true)
+    pendingCapture = nil
+    try? await Task.sleep(nanoseconds: 450_000_000)
+    let failingTask = Task { @MainActor in await late.sampleNow() }
+    while pendingCapture == nil { await Task.yield() }
+    late.paused = true
+    pendingCapture!.resume(throwing: NSError(domain: "SyntheticCapture", code: 1))
+    await failingTask.value
+    late.paused = false
+    pendingCapture = nil
+    let recoveredTask = Task { @MainActor in await late.sampleNow() }
+    while pendingCapture == nil { await Task.yield() }
+    pendingCapture!.resume(returning: 0.95)
+    await recoveredTask.value
+    assert(ink.tracksBackdrop)
+    print("PASS: backdrop reuses existing authorization, requests once, pauses for menus, retains intent after revocation and rejects disabled late captures")
+    backdropTestsDone = true
+}
+let backdropDeadline = Date().addingTimeInterval(5)
+while !backdropTestsDone && Date() < backdropDeadline {
+    RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+}
+assert(backdropTestsDone)
+
+// Check readable settled foregrounds without changing the system's appearance.
+previewInteraction.setPinned("music", true)
+previewInteraction.controlsArmed = false
+previewSystem.musicExpanded = false
+let adaptiveInk = CapsuleForeground(isDark: false)
+adaptiveInk.tracksBackdrop = true
+func adaptivePill() -> some View {
+    GlassPill(module: SceneConfig.fallback.modules.first { $0.id == "music" }!, store: previewStore,
+        systemApps: previewSystem, pomodoro: previewPomodoro, timeline: previewTimeline,
+        interaction: previewInteraction, onClose: {}, foreground: adaptiveInk)
+}
+render(adaptivePill(), name: "adaptive-ink-light-background", size: CGSize(width: 464, height: 36), dark: false)
+adaptiveInk.adapt(isDark: true)
+RunLoop.main.run(until: Date().addingTimeInterval(0.32))
+render(adaptivePill(), name: "adaptive-ink-dark-background", size: CGSize(width: 464, height: 36), dark: true)
+if #available(macOS 26.0, *) {
+    let backing = CapsuleGlassBacking()
+    for fraction in [0.0, 0.3, 0.5, 0.8, 1.0] {
+        NativePillGlass(clearPassThrough: true, corner: 18, lightFraction: fraction).configure(backing)
+        assert(backing.light.style == .clear && backing.dark.style == .clear)
+        assert(backing.light.alphaValue + backing.dark.alphaValue <= 0.22001)
+    }
+}
+print("PASS: adaptive foregrounds render in both backgrounds and blended clear backing never exceeds its opacity cap")
