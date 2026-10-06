@@ -2,6 +2,26 @@
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
   <channel>
     <item>
+      <title>Notch Balls Prototype 0.44 — 未公证测试版 / Unnotarized test</title>
+      <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.44</link>
+      <sparkle:version>44</sparkle:version>
+      <sparkle:shortVersionString>0.44</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <sparkle:minimumAutoupdateVersion>44</sparkle:minimumAutoupdateVersion>
+      <pubDate>Tue, 06 Oct 2026 14:49:06 +0000</pubDate>
+      <description sparkle:format="plain-text">未公证测试版（Unnotarized test build）。仅用于现有安装的更新验证，不是正式公开版；未通过 Developer ID 签名或 Apple 公证。
+
+0.44 · 修复全屏刘海两翼不可见
+
+修复 0.43 在真实全屏时已识别全屏、两翼也已创建，却被系统刘海安全带底板遮住的问题。两翼从 floating 层移到 statusBar 层，保持在弹出菜单之下；Pin 状态、点击展开/收回和退出全屏恢复逻辑保持一致。
+
+本机空白原生窗口进入真实全屏 Space 后复现旧版问题，并使用生产两翼代码验证修复后的层级与首击回调；点击不夺取全屏应用的前台焦点。生产 AppDelegate 的 Pin 保留、快速展开/收回和桌面布局恢复回归检查通过。浏览器视频、分屏及独占游戏仍需逐项验证。
+
+本次没有下载或安装更新包，未替换正在运行的 0.43，不新增权限请求。本版仍使用临时代码签名与 Sparkle Ed25519 签名，未经 Developer ID 签名或 Apple 公证，不是正式公开版。</description>
+      <enclosure url="https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/download/v0.44/Notch-Balls-Prototype-0.44-macOS-arm64.zip" length="9708208" type="application/octet-stream" sparkle:edSignature="dAvPiroMBMLf9bACD5kpJIn16B36wl5+EJkS0M834bS+B3ZEWx9u2KXceKjwyEvBvtK62ZnicJZa/LzkIyeiAA==" />
+    </item>
+    <item>
       <title>Notch Balls Prototype 0.43 — 未公证测试版 / Unnotarized test</title>
       <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.43</link>
       <sparkle:version>43</sparkle:version>
