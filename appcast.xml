@@ -2,6 +2,30 @@
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
   <channel>
     <item>
+      <title>Notch Balls Prototype 0.43 — 未公证测试版 / Unnotarized test</title>
+      <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.43</link>
+      <sparkle:version>43</sparkle:version>
+      <sparkle:shortVersionString>0.43</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <sparkle:minimumAutoupdateVersion>43</sparkle:minimumAutoupdateVersion>
+      <pubDate>Tue, 06 Oct 2026 13:55:23 +0000</pubDate>
+      <description sparkle:format="plain-text">未公证测试版（Unnotarized test build）。仅用于现有安装的更新验证，不是正式公开版；未通过 Developer ID 签名或 Apple 公证。
+
+0.43 · 全屏刘海贴边 Pin
+
+已固定的模块进入全屏后缩成刘海左右两翼，始终常驻，不自动隐藏。左侧为模块色点，右侧显示倒计时、播放状态、今日进度或待办数量；不显示歌词滚动、频谱或持续扫光。中间相机区域不设置浮层窗口。
+
+点击任一两翼展开原来的胶囊，点击两翼、“收回到刘海”或按 Esc 收回；收回不取消 Pin、不结束计时。经过屏幕顶部不会自动展开。退出全屏恢复原来的模块、展开层级和桌面位置。
+
+布局使用系统实际刘海边界；无刘海屏幕回退为常驻小胶囊。菜单打开时两翼保持可见并暂停点击，常驻两翼不获取键盘焦点。可在菜单关闭“全屏时刘海贴边 Pin”，恢复原展示方式。
+
+已验证原生浮层首击、实际窗口尺寸、负坐标和无刘海回退、菜单期间常驻，以及 AppDelegate 的快速展开/收回和桌面状态恢复；五个模块的原生布局及既有界面回归检查通过。测试全屏状态和内容均为模拟，第三方应用、分屏及独占游戏的实际效果仍需使用者检查。本次不下载或安装更新包。
+
+全屏 Pin 本身不新增权限请求，应用标识和偏好保持一致。本版仍使用临时代码签名与 Sparkle Ed25519 签名，未经 Developer ID 签名或 Apple 公证，不是正式公开版；macOS 更新后是否保留授权仍受签名身份限制。</description>
+      <enclosure url="https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/download/v0.43/Notch-Balls-Prototype-0.43-macOS-arm64.zip" length="9708207" type="application/octet-stream" sparkle:edSignature="JiMHFvLpPH3K6dzRKS0tVC+fs8kLZk+4G4uR/TR4pPYj68aNBD2jM+dP9nDzDNTVhG1ZgiPgu9cTpHDf/8uMBA==" />
+    </item>
+    <item>
       <title>Notch Balls Prototype 0.42 — 未公证测试版 / Unnotarized test</title>
       <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.42</link>
       <sparkle:version>42</sparkle:version>
