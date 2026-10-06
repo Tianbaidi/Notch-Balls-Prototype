@@ -168,7 +168,10 @@ final class FullscreenPinController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.level = .floating
+        // Fullscreen's notch/menu-bar backing is at level 24. Floating (3) is
+        // on the correct Space but completely covered inside the safe band.
+        // Status-bar (25) clears that backing while remaining below menus.
+        panel.level = .statusBar
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         return panel

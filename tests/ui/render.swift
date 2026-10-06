@@ -739,6 +739,11 @@ nativePins.update(status: focusPinStatus, geometry: pinGeometry, menuTracking: f
 RunLoop.main.run(until: Date().addingTimeInterval(0.15))
 assert(nativePins.leftPanel!.isVisible && nativePins.rightPanel!.isVisible)
 assert(!nativePins.leftPanel!.canBecomeKey && !nativePins.rightPanel!.canBecomeMain)
+for panel in [nativePins.leftPanel!, nativePins.rightPanel!] {
+    assert(panel.level.rawValue > Int(CGWindowLevelForKey(.mainMenuWindow)) &&
+           panel.level.rawValue < Int(CGWindowLevelForKey(.popUpMenuWindow)),
+        "Fullscreen wings must clear the notch backing and stay below popup menus")
+}
 assert(nativePins.leftPanel!.frame == pinGeometry.left && nativePins.rightPanel!.frame == pinGeometry.right,
     "Expected \(pinGeometry); actual left \(nativePins.leftPanel!.frame), right \(nativePins.rightPanel!.frame)")
 func clickSyntheticPin(_ panel: NSPanel) {
