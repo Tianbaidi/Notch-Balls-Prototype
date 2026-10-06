@@ -235,6 +235,11 @@ final class TimelineStore: ObservableObject {
         if !interactingTracks.isEmpty { interactingTracks.removeAll(); interactionChanged?(false) }
     }
 
+    func setPresentationVisible(_ value: Bool) {
+        guard value != visible else { return }
+        visible = value
+    }
+
     func close(_ completion: @escaping () -> Void) {
         transitionWork?.cancel()
         closing = true

@@ -20,7 +20,7 @@ struct DockGeometry {
 
     static func resolve(screen: CGRect, safeTop: CGFloat, height: CGFloat,
                         position: DockPosition, fullscreen: Bool, maximumHeight: CGFloat = 444, notchLeftEdge: CGFloat? = nil) -> DockGeometry {
-        let besideNotch = position == .notchLeft
+        let besideNotch = !fullscreen && position == .notchLeft
         if besideNotch {
             let boundary = min(screen.maxX - 80, max(screen.minX + 240, notchLeftEdge ?? screen.midX - 90))
             let width = min(640, boundary - screen.minX - 24)
@@ -30,7 +30,7 @@ struct DockGeometry {
                 alignment: 1, notchBandHeight: band)
         }
         let width = min(640, screen.width - 24)
-        let side = position == .left ? -1 : position == .right ? 1 : 0
+        let side = fullscreen ? 0 : position == .left ? -1 : position == .right ? 1 : 0
         let top: CGFloat
         let x: CGFloat
         let trigger: CGRect

@@ -682,3 +682,178 @@ if #available(macOS 26.0, *) {
     }
 }
 print("PASS: adaptive foregrounds render in both backgrounds and blended clear backing never exceeds its opacity cap")
+
+// Fullscreen Pin uses synthetic screen geometry and our own panels only.
+let pinScreen = CGRect(x: 0, y: 0, width: 1512, height: 982)
+let pinGeometry = FullscreenPinGeometry.resolve(screen: pinScreen, safeTop: 33, notchLeft: 668, notchRight: 844)
+assert(pinGeometry.usesWings && pinGeometry.left!.maxX == 668 && pinGeometry.right.minX == 844)
+assert(pinGeometry.left!.minY >= pinScreen.maxY - 33 && pinGeometry.right.maxY <= pinScreen.maxY)
+assert(!pinGeometry.left!.intersects(pinGeometry.right))
+let shiftedPin = FullscreenPinGeometry.resolve(screen: pinScreen.offsetBy(dx: -1800, dy: -700), safeTop: 33,
+    notchLeft: 668 - 1800, notchRight: 844 - 1800)
+assert(shiftedPin.left == pinGeometry.left!.offsetBy(dx: -1800, dy: -700))
+assert(shiftedPin.right == pinGeometry.right.offsetBy(dx: -1800, dy: -700))
+for screen in [CGRect(x: 0, y: 0, width: 1024, height: 768), CGRect(x: -1920, y: 0, width: 1920, height: 1080)] {
+    let shape = FullscreenPinGeometry.resolve(screen: screen, safeTop: 0, notchLeft: nil, notchRight: nil)
+    assert(!shape.usesWings && screen.contains(shape.right) && shape.right.height == 28)
+}
+assert(!FullscreenPinGeometry.resolve(screen: pinScreen, safeTop: 33, notchLeft: 20, notchRight: 1490).usesWings)
+let originalPinLayout = CapsuleLayoutSnapshot(selected: 0, reminders: true, notes: false, music: false,
+    pomodoro: false, timelineLevel: 3)
+let temporaryPinLayout = CapsuleLayoutSnapshot(selected: 1, reminders: false, notes: false, music: false,
+    pomodoro: false, timelineLevel: 1)
+var pinSession = FullscreenPinSession()
+assert(pinSession.update(active: true, snapshot: originalPinLayout) == nil)
+pinSession.expand(); assert(pinSession.active && pinSession.expanded)
+assert(pinSession.update(active: true, snapshot: temporaryPinLayout) == nil)
+pinSession.collapse(); assert(pinSession.active && !pinSession.expanded)
+assert(pinSession.update(active: false, snapshot: temporaryPinLayout) == originalPinLayout)
+assert(pinSession.desktop == nil && !pinSession.expanded)
+assert(pinSession.update(active: false, snapshot: temporaryPinLayout) == nil)
+for _ in 0..<30 {
+    _ = pinSession.update(active: true, snapshot: originalPinLayout)
+    pinSession.expand(); pinSession.collapse()
+    assert(pinSession.update(active: false, snapshot: temporaryPinLayout) == originalPinLayout)
+}
+print("PASS: fullscreen wings leave the hardware gap empty, negative screens align, notchless screens stay visible and desktop snapshots survive interruptions")
+
+let focusPinStatus = FullscreenPinStatus(moduleID: "pomodoro", value: "20:18", symbol: nil,
+    progress: 0.19, accessibility: "固定番茄钟，20 分 18 秒")
+let musicPinStatus = FullscreenPinStatus(moduleID: "music", value: "播放中", symbol: nil,
+    progress: 0.44, accessibility: "固定音乐，播放中")
+let timelinePinStatus = FullscreenPinStatus(moduleID: "timeline", value: "65%", symbol: nil,
+    progress: 0.65, accessibility: "固定时间轴，今日进度65%")
+for (name, status) in [("focus", focusPinStatus), ("music", musicPinStatus), ("timeline", timelinePinStatus)] {
+    render(HStack(spacing: 0) {
+        FullscreenPinSurface(status: status, part: .left, action: {}).frame(width: 40)
+        Color.black.frame(width: 176)
+        FullscreenPinSurface(status: status, part: .right, action: {}).frame(width: 64)
+    }, name: "fullscreen-pin-\(name)", size: CGSize(width: 280, height: 28), dark: true)
+}
+render(FullscreenPinSurface(status: focusPinStatus, part: .capsule, action: {}),
+    name: "fullscreen-pin-external", size: CGSize(width: 148, height: 28))
+let nativePins = FullscreenPinController()
+var nativePinClicks = 0
+nativePins.open = { nativePinClicks += 1 }
+nativePins.update(status: focusPinStatus, geometry: pinGeometry, menuTracking: false)
+RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+assert(nativePins.leftPanel!.isVisible && nativePins.rightPanel!.isVisible)
+assert(!nativePins.leftPanel!.canBecomeKey && !nativePins.rightPanel!.canBecomeMain)
+assert(nativePins.leftPanel!.frame == pinGeometry.left && nativePins.rightPanel!.frame == pinGeometry.right,
+    "Expected \(pinGeometry); actual left \(nativePins.leftPanel!.frame), right \(nativePins.rightPanel!.frame)")
+func clickSyntheticPin(_ panel: NSPanel) {
+    let point = CGPoint(x: panel.contentView!.bounds.midX, y: panel.contentView!.bounds.midY)
+    let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0,
+        windowNumber: panel.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+    let up = NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: 0.01,
+        windowNumber: panel.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0)!
+    NSApp.postEvent(up, atStart: false)
+    panel.sendEvent(down)
+    if let queuedUp = NSApp.nextEvent(matching: .leftMouseUp, until: Date(), inMode: .default, dequeue: true) {
+        panel.sendEvent(queuedUp)
+    }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+}
+clickSyntheticPin(nativePins.leftPanel!)
+clickSyntheticPin(nativePins.rightPanel!)
+assert(nativePinClicks == 2, "Both resident wings must respond on the first click")
+nativePins.pauseInteraction(true)
+assert(nativePins.leftPanel!.ignoresMouseEvents && nativePins.rightPanel!.ignoresMouseEvents)
+assert(nativePins.leftPanel!.isVisible && nativePins.rightPanel!.isVisible)
+nativePins.pauseInteraction(false)
+let externalPinGeometry = FullscreenPinGeometry.resolve(screen: pinScreen, safeTop: 0, notchLeft: nil, notchRight: nil)
+nativePins.update(status: musicPinStatus, geometry: externalPinGeometry, menuTracking: false)
+assert(!nativePins.leftPanel!.isVisible && nativePins.rightPanel!.isVisible)
+nativePins.hide()
+print("PASS: actual native wing panels accept first clicks, stay visible during menu tracking, never take keyboard focus and fall back to a visible capsule")
+
+extension AppDelegate {
+    func prepareFullscreenPreview() {
+        prepareTrackingPreview()
+        timeline = TimelineStore(defaults: scratchDefaults, startTimer: false, calendarAuthorization: { .denied })
+        let interaction = CapsuleInteraction(defaults: scratchDefaults)
+        interaction.setPinned("demo-a", true)
+        balls = BallView(frame: CGRect(x: 0, y: 0, width: 640, height: 540), config: config,
+            store: moduleStore, systemApps: systemApps, pomodoro: pomodoro, timeline: timeline, interaction: interaction)
+        overlay = makePanel(frame: balls.frame)
+        overlay.contentView = balls
+        trigger = makePanel(frame: CGRect(x: 0, y: 0, width: 160, height: 30))
+        trigger.contentView = TriggerView()
+        balls.reveal = 1
+        balls.selected = 0
+        moduleStore.setReminderExpanded(true)
+        timeline.setLevel(3)
+        fullscreenPinController.open = { [weak self] in self?.toggleFullscreenCapsule() }
+        balls.interaction.compactRequested = { [weak self] in self?.compactFullscreenCapsule() }
+    }
+    func placeFullscreenPreview() { updatePlacement(refreshFullscreen: true) }
+    func openFullscreenPreview() { toggleFullscreenCapsule() }
+    func compactFullscreenPreview() { compactFullscreenCapsule() }
+    var fullscreenPreviewActive: Bool { fullscreenPin.active }
+    var fullscreenPreviewExpanded: Bool { fullscreenPin.expanded }
+    var fullscreenPreviewSelected: Int? { balls.selected }
+    var fullscreenPreviewPinned: Bool { balls.interaction.isPinned("demo-a") }
+    var fullscreenPreviewReminders: Bool { moduleStore.reminderExpanded }
+    var fullscreenPreviewTimelineLevel: Int { timeline.level }
+    var fullscreenPreviewOverlay: NSPanel { overlay }
+    func editFullscreenPreview() { moduleStore.setReminderExpanded(false); timeline.setLevel(1) }
+    func replaceFullscreenPinPreview() {
+        balls.interaction.setPinned("demo-a", false)
+        balls.interaction.setPinned("demo-b", true)
+    }
+    func finishFullscreenPreview() {
+        collapseWork?.cancel(); revealAnimator.cancel(); fullscreenAnimator.cancel()
+        fullscreenPinController.hide(); overlay.orderOut(nil); trigger.orderOut(nil)
+        finishTrackingPreview()
+    }
+}
+var syntheticFullscreen = true
+let fullscreenDelegate = AppDelegate(config: testConfig, moduleStore: ModuleStore(), systemApps: SystemAppsStore(),
+    pomodoro: PomodoroModel(defaults: scratchDefaults, phaseCue: { _ in }), fullscreenDetection: { _ in syntheticFullscreen })
+fullscreenDelegate.prepareFullscreenPreview()
+fullscreenDelegate.placeFullscreenPreview()
+RunLoop.main.run(until: Date().addingTimeInterval(0.25))
+assert(fullscreenDelegate.fullscreenPreviewActive && !fullscreenDelegate.fullscreenPreviewExpanded)
+assert(!fullscreenDelegate.fullscreenPreviewOverlay.isVisible && fullscreenDelegate.fullscreenPreviewPinned)
+fullscreenDelegate.openFullscreenPreview()
+RunLoop.main.run(until: Date().addingTimeInterval(0.25))
+assert(fullscreenDelegate.fullscreenPreviewExpanded && fullscreenDelegate.fullscreenPreviewOverlay.isVisible)
+fullscreenDelegate.editFullscreenPreview()
+fullscreenDelegate.compactFullscreenPreview()
+fullscreenDelegate.openFullscreenPreview()
+RunLoop.main.run(until: Date().addingTimeInterval(0.25))
+assert(fullscreenDelegate.fullscreenPreviewExpanded && fullscreenDelegate.fullscreenPreviewOverlay.isVisible,
+    "An interrupted collapse must not hide a reopened capsule")
+fullscreenDelegate.compactFullscreenPreview()
+syntheticFullscreen = false
+fullscreenDelegate.placeFullscreenPreview()
+RunLoop.main.run(until: Date().addingTimeInterval(0.25))
+assert(!fullscreenDelegate.fullscreenPreviewActive && fullscreenDelegate.fullscreenPreviewPinned)
+assert(fullscreenDelegate.fullscreenPreviewSelected == 0 && fullscreenDelegate.fullscreenPreviewReminders)
+assert(fullscreenDelegate.fullscreenPreviewTimelineLevel == 3 && fullscreenDelegate.fullscreenPreviewOverlay.isVisible)
+syntheticFullscreen = true
+fullscreenDelegate.placeFullscreenPreview()
+fullscreenDelegate.replaceFullscreenPinPreview()
+syntheticFullscreen = false
+fullscreenDelegate.placeFullscreenPreview()
+assert(!fullscreenDelegate.fullscreenPreviewPinned && fullscreenDelegate.fullscreenPreviewSelected == 1,
+    "An intentionally removed Pin must not be restored on exit")
+fullscreenDelegate.finishFullscreenPreview()
+scratchDefaults.removePersistentDomain(forName: previewSuite)
+print("PASS: production AppDelegate integrates resident/open/compact transitions, ignores stale collapse completions, preserves Pin and restores original desktop expansion")
+
+previewInteraction.fullscreenPresentation = true
+previewInteraction.presentationVisible = true
+previewStore.setReminderExpanded(true)
+previewSystem.notesExpanded = true
+previewSystem.musicExpanded = false
+render(pill("music"), name: "fullscreen-music-open", size: CGSize(width: 464, height: 60), dark: true)
+render(pill("reminders"), name: "fullscreen-reminders-open", size: CGSize(width: 310, height: 380))
+render(pill("notes"), name: "fullscreen-notes-open", size: CGSize(width: 310, height: 340))
+previewPomodoro.setExpanded(true)
+render(pill("pomodoro"), name: "fullscreen-focus-open", size: CGSize(width: 354, height: 484))
+previewTimeline.setLevel(3)
+previewTimeline.setPresentationVisible(true)
+render(pill("timeline"), name: "fullscreen-timeline-open", size: CGSize(width: 520, height: 240), dark: true, settle: 1.1)
+previewInteraction.fullscreenPresentation = false
+print("PASS: all five modules render the fullscreen compact action without changing their normal content layout")

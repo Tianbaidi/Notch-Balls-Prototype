@@ -202,6 +202,9 @@ final class ModuleStore: ObservableObject {
 
 final class CapsuleInteraction: ObservableObject {
     @Published var controlsArmed = false
+    @Published var fullscreenPresentation = false
+    @Published var presentationVisible = true
+    var compactRequested: (() -> Void)?
     @Published var backdropRevision = 0
     @Published private(set) var pinnedModules: Set<String>
     private(set) var lastPinnedID: String?
@@ -281,6 +284,7 @@ private struct IridescentRim: View {
     let passive: Bool
     let accent: Color
     let engaged: Bool
+    var visible = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var enteredAt = ProcessInfo.processInfo.systemUptime
     @State private var entering = true
@@ -289,7 +293,7 @@ private struct IridescentRim: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 20.0,
-                                paused: reduceMotion || passive || (!entering && !engaged && !hoverTransition) || ProcessInfo.processInfo.isLowPowerModeEnabled)) { _ in
+                                paused: !visible || reduceMotion || passive || (!entering && !engaged && !hoverTransition) || ProcessInfo.processInfo.isLowPowerModeEnabled)) { _ in
             let elapsed = ProcessInfo.processInfo.systemUptime - enteredAt
             let hoverPhase = CapsuleMotion.smooth((ProcessInfo.processInfo.systemUptime - hoverChangedAt) / 0.20)
             let hoverEnergy = engaged ? hoverPhase : hoverTransition ? 1 - hoverPhase : 0
@@ -479,7 +483,19 @@ private struct GlassPill: View {
                                               .clear, accent.opacity(clearPassThrough ? 0 : 0.018)],
                                      startPoint: .topLeading, endPoint: .bottomTrailing))
                 .allowsHitTesting(false)
-            content.padding(.horizontal, detailOpen ? 16 : 10)
+            VStack(spacing: 0) {
+                if interaction.fullscreenPresentation {
+                    HStack {
+                        Text("全屏 Pin").font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
+                        Spacer()
+                        Button { interaction.compactRequested?() } label: {
+                            Label("收回到刘海", systemImage: "chevron.up")
+                                .font(.system(size: 9, weight: .medium))
+                        }.buttonStyle(.plain).help("收回常驻两翼，保留固定状态")
+                    }.frame(height: 24)
+                }
+                content.frame(maxHeight: .infinity)
+            }.padding(.horizontal, detailOpen ? 16 : 10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: detailOpen && module.id != "music" ? .topLeading : .center)
                 .foregroundStyle(foreground.palette.primary)
                 .environment(\.capsuleInk, foreground.palette)
@@ -495,7 +511,8 @@ private struct GlassPill: View {
                 .allowsHitTesting(false)
         }
         .overlay {
-            IridescentRim(corner: corner, passive: clearPassThrough, accent: accent, engaged: surfaceHovered)
+            IridescentRim(corner: corner, passive: clearPassThrough, accent: accent, engaged: surfaceHovered,
+                         visible: interaction.presentationVisible)
         }
         .contentShape(RoundedRectangle(cornerRadius: corner))
         .animation(reduceMotion ? nil : .easeOut(duration: 0.20), value: clearPassThrough)
@@ -1161,7 +1178,7 @@ final class BallView: NSView {
     let systemApps: SystemAppsStore
     let pomodoro: PomodoroModel
     let timeline: TimelineStore
-    let interaction = CapsuleInteraction()
+    let interaction: CapsuleInteraction
     let foreground = CapsuleForeground()
     private var inkObservation: AnyCancellable?
     var contrastRect: CGRect? {
@@ -1200,12 +1217,14 @@ final class BallView: NSView {
 
     init(frame: NSRect, config: SceneConfig, store: ModuleStore,
          systemApps: SystemAppsStore,
-         pomodoro: PomodoroModel, timeline: TimelineStore) {
+         pomodoro: PomodoroModel, timeline: TimelineStore,
+         interaction: CapsuleInteraction = CapsuleInteraction()) {
         self.config = config
         self.store = store
         self.systemApps = systemApps
         self.pomodoro = pomodoro
         self.timeline = timeline
+        self.interaction = interaction
         super.init(frame: frame)
         wantsLayer = true
         inkObservation = foreground.objectWillChange.sink { [weak self] in self?.needsDisplay = true }
@@ -1244,11 +1263,24 @@ final class BallView: NSView {
     var maximumHeight: CGFloat { max(80, 50 + CGFloat(rows) * rowStep) + 424 + 64 }
     var desiredHeight: CGFloat {
         max(80, 50 + CGFloat(rows) * rowStep) + detailExtra + (hintsVisible ? 64 : 0)
+            + (interaction.fullscreenPresentation ? 24 : 0)
+    }
+
+    func setFullscreenPresentation(_ active: Bool, visible: Bool) {
+        let changed = interaction.fullscreenPresentation != active
+        if changed { interaction.fullscreenPresentation = active }
+        if interaction.presentationVisible != visible {
+            interaction.presentationVisible = visible
+            systemApps.setMusicVisible(visible && selected.map { config.modules[$0].id == "music" } == true)
+            timeline.setPresentationVisible(visible && selected.map { config.modules[$0].id == "timeline" } == true)
+        }
+        refreshLongBreakHints()
+        if changed { updateLayout(); heightChanged?(desiredHeight) }
     }
 
     func refreshLongBreakHints() {
         let timerSelected = selected.map { config.modules[$0].id == "pomodoro" || config.modules[$0].id == "timer" } ?? false
-        let visible = timerSelected && reveal > 0.01 && pomodoro.phase == .longBreak
+        let visible = interaction.presentationVisible && timerSelected && reveal > 0.01 && pomodoro.phase == .longBreak
             && (pomodoro.longBreakPromptElapsed.map { $0 < 10.6 } ?? false)
         if visible != hintsVisible {
             hintsVisible = visible
@@ -1366,7 +1398,7 @@ final class BallView: NSView {
         if let index = morphingIndex, let pillHost {
             let source = selectionOrigin ?? ball(at: index)
             var destination = expandedLayout(for: index).pill
-            destination.size.height += detailExtra
+            destination.size.height += detailExtra + (interaction.fullscreenPresentation ? 24 : 0)
             pillHost.frame = mix(source, destination, pillProgress)
             pillHost.alphaValue = selectionOrigin != nil ? 1 : min(1, max(0, (pillProgress - 0.18) / 0.82))
             pillHost.isHidden = selectionOrigin == nil && pillProgress < 0.01
@@ -1527,12 +1559,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let moduleStore: ModuleStore
     private let systemApps: SystemAppsStore
     private let pomodoro: PomodoroModel
+    private let fullscreenDetection: ((NSScreen) -> Bool)?
     init(config: SceneConfig = .load(), moduleStore: ModuleStore = ModuleStore(),
-         systemApps: SystemAppsStore = SystemAppsStore(), pomodoro: PomodoroModel = PomodoroModel()) {
+         systemApps: SystemAppsStore = SystemAppsStore(), pomodoro: PomodoroModel = PomodoroModel(),
+         fullscreenDetection: ((NSScreen) -> Bool)? = nil) {
         self.config = config
         self.moduleStore = moduleStore
         self.systemApps = systemApps
         self.pomodoro = pomodoro
+        self.fullscreenDetection = fullscreenDetection
         super.init()
     }
     private var timeline: TimelineStore!
@@ -1572,6 +1607,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var fullscreenAtAnchor = false
     private var dockPosition = DockPosition(rawValue: UserDefaults.standard.integer(forKey: "notch.position.v3")) ?? .automatic
     private var positionItems: [NSMenuItem] = []
+    private var fullscreenPin = FullscreenPinSession()
+    private let fullscreenPinController = FullscreenPinController()
+    private let fullscreenAnimator = CapsuleAnimator()
+    private var fullscreenOverlayShown = true
+    private var restoringFullscreenLayout = false
+    private var pinObservation: AnyCancellable?
+    private var fullscreenPinItem: NSMenuItem?
+    private var fullscreenPinEnabled = UserDefaults.standard.object(forKey: "notch.fullscreenPin.v1") == nil
+        || UserDefaults.standard.bool(forKey: "notch.fullscreenPin.v1")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         timeline = TimelineStore()
@@ -1605,6 +1649,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         overlay.contentView = balls
         overlay.ignoresMouseEvents = true
         overlay.becomesKeyOnlyIfNeeded = true
+        fullscreenPinController.open = { [weak self] in self?.toggleFullscreenCapsule() }
+        balls.interaction.compactRequested = { [weak self] in self?.compactFullscreenCapsule() }
+        pinObservation = balls.interaction.$pinnedModules.dropFirst().sink { [weak self] _ in
+            // Published values arrive before storage changes; resolve the selected Pin afterwards.
+            DispatchQueue.main.async { self?.updatePlacement(refreshFullscreen: false) }
+        }
         balls.didLeave = { [weak self] in
             self?.pointerInsideOverlay = false
             self?.scheduleCollapse()
@@ -1625,6 +1675,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         (overlay as? NotchPanel)?.escapeAction = { [weak self] in
             guard let self else { return }
             self.overlay.makeFirstResponder(nil)
+            if self.fullscreenPin.active { self.compactFullscreenCapsule(); return }
             self.moduleStore.setReminderExpanded(false)
             self.systemApps.setExpanded("notes", false)
             self.systemApps.setExpanded("music", false)
@@ -1648,6 +1699,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let positionRoot = NSMenuItem(title: "位置", action: nil, keyEquivalent: "")
         positionRoot.submenu = positionMenu
         menu.addItem(positionRoot)
+        let fullscreenItem = NSMenuItem(title: "全屏时刘海贴边 Pin", action: #selector(toggleFullscreenPin), keyEquivalent: "")
+        fullscreenItem.toolTip = "固定内容在全屏时以两翼常驻；点击展开，无刘海屏显示小胶囊。"
+        fullscreenPinItem = fullscreenItem
+        menu.addItem(fullscreenItem)
         menu.addItem(NSMenuItem(title: "显示小球", action: #selector(showFromMenu), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "打开提醒事项列表", action: #selector(showReminders), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "打开便笺", action: #selector(showNotes), keyEquivalent: ""))
@@ -1761,7 +1816,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let frame = overlay.convertToScreen(balls.convert(rect, to: nil)).intersection(screen.frame)
         guard !frame.isNull, !frame.isEmpty else { return nil }
         return BackdropRegion(frame: frame, screenFrame: screen.frame, displayID: number.uint32Value,
-            excludedWindows: [CGWindowID(overlay.windowNumber), CGWindowID(trigger.windowNumber)])
+            excludedWindows: fullscreenPinController.windowNumbers.union([CGWindowID(overlay.windowNumber), CGWindowID(trigger.windowNumber)]))
     }
 
     private func refreshBackdropMenu() {
@@ -1772,6 +1827,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleBackdrop() { backdrop.setEnabled(!backdrop.enabled) }
+    @objc private func toggleFullscreenPin() {
+        fullscreenPinEnabled.toggle()
+        UserDefaults.standard.set(fullscreenPinEnabled, forKey: "notch.fullscreenPin.v1")
+        updatePlacement(refreshFullscreen: true)
+    }
     @objc private func openBackdropPermission() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
             NSWorkspace.shared.open(url)
@@ -1815,16 +1875,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func detectFullscreen(on screen: NSScreen) -> Bool {
-        guard let app = NSWorkspace.shared.frontmostApplication else { return fullscreenAtAnchor }
-        // File pickers or our menu can activate this app while the other app remains full screen.
-        if app.processIdentifier == ProcessInfo.processInfo.processIdentifier { return fullscreenAtAnchor }
+        if let fullscreenDetection { return fullscreenDetection(screen) }
         guard let primary = NSScreen.screens.first,
               let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
             return fullscreenAtAnchor
         }
         return windows.contains { item in
-            guard (item[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == app.processIdentifier,
+            // The frontmost app may be on a different display. Inspect the anchor's visible windows.
+            guard let pid = (item[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+                  pid != ProcessInfo.processInfo.processIdentifier,
                   (item[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+                  ((item[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) > 0.01,
                   let bounds = item[kCGWindowBounds as String] as? [String: Any],
                   let quartz = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return false }
             let rect = CGRect(x: quartz.minX, y: primary.frame.maxY - quartz.maxY, width: quartz.width, height: quartz.height)
@@ -1835,13 +1896,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updatePlacement(refreshFullscreen: Bool) {
         guard !menuTracking.isActive else { return }
         guard let screen = anchorScreen, let overlay, let balls, let trigger else { return }
+        guard !restoringFullscreenLayout else { return }
         if refreshFullscreen {
             let nextFullscreen = detectFullscreen(on: screen)
             if nextFullscreen != fullscreenAtAnchor { refreshGlassForSpaceChange() }
             fullscreenAtAnchor = nextFullscreen
         }
+        let wasFullscreenPin = fullscreenPin.active
+        let restore = fullscreenPin.update(active: fullscreenAtAnchor && fullscreenPinEnabled && preferredPinnedIndex() != nil,
+            snapshot: fullscreenLayoutSnapshot())
+        if !wasFullscreenPin && fullscreenPin.active {
+            collapseWork?.cancel()
+            revealAnimator.cancel()
+            controlsArmed = false
+            pointerInsideOverlay = false
+            pointerDragging = false
+            overlay.makeFirstResponder(nil)
+        }
+        if let restore {
+            restoreFullscreenLayout(restore)
+            if preferredPinnedIndex() != nil { balls.reveal = 1 }
+        }
+        let compact = fullscreenPin.active && !fullscreenPin.expanded
+        balls.setFullscreenPresentation(fullscreenPin.active, visible: !compact)
+        backdrop?.paused = compact || menuTracking.isActive
+        fullscreenPinItem?.state = fullscreenPinEnabled ? .on : .off
         let geometry = DockGeometry.resolve(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
-            height: balls.desiredHeight, position: dockPosition, fullscreen: fullscreenAtAnchor, maximumHeight: balls.maximumHeight,
+            height: balls.desiredHeight, position: dockPosition, fullscreen: fullscreenPin.active, maximumHeight: balls.maximumHeight,
             notchLeftEdge: screen.auxiliaryTopLeftArea.flatMap { $0.isEmpty ? nil : $0.maxX })
         if overlay.frame != geometry.overlay {
             overlay.setFrame(geometry.overlay, display: true)
@@ -1857,7 +1938,97 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         (trigger.contentView as? TriggerView)?.showsSideHandle = geometry.alignment != 0 && geometry.notchBandHeight == 0
         (trigger.contentView as? TriggerView)?.showsNotchHandle = geometry.notchBandHeight > 0
         for item in positionItems { item.state = item.tag == dockPosition.rawValue ? .on : .off }
+        if fullscreenPin.active, let index = preferredPinnedIndex() {
+            let shape = FullscreenPinGeometry.resolve(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
+                notchLeft: screen.auxiliaryTopLeftArea.flatMap { $0.isEmpty ? nil : $0.maxX },
+                notchRight: screen.auxiliaryTopRightArea.flatMap { $0.isEmpty ? nil : $0.minX })
+            fullscreenPinController.update(status: fullscreenStatus(at: index), geometry: shape, menuTracking: menuTracking.isActive)
+        } else { fullscreenPinController.hide() }
+        setFullscreenOverlayShown(!compact)
         updatePointerRouting()
+        if wasFullscreenPin && !fullscreenPin.active && preferredPinnedIndex() == nil && !pointerInsideOverlay {
+            scheduleCollapse()
+        }
+    }
+
+    private func fullscreenLayoutSnapshot() -> CapsuleLayoutSnapshot {
+        CapsuleLayoutSnapshot(selected: balls.selected, reminders: moduleStore.reminderExpanded,
+            notes: systemApps.notesExpanded, music: systemApps.musicExpanded, pomodoro: pomodoro.expanded,
+            timelineLevel: timeline.level, selectedPinned: balls.lockedCapsule)
+    }
+
+    private func restoreFullscreenLayout(_ snapshot: CapsuleLayoutSnapshot) {
+        restoringFullscreenLayout = true
+        defer { restoringFullscreenLayout = false }
+        let index = snapshot.selected.flatMap { config.modules.indices.contains($0) ? $0 : nil }
+        let originalStillPinned = index.map { balls.interaction.isPinned(config.modules[$0].id) } ?? false
+        let restoreIndex = snapshot.selectedPinned && !originalStillPinned ? preferredPinnedIndex() : index
+        balls.selected = preferredPinnedIndex() == nil ? nil : restoreIndex ?? preferredPinnedIndex()
+        moduleStore.setReminderExpanded(snapshot.reminders)
+        systemApps.setExpanded("notes", snapshot.notes)
+        systemApps.setExpanded("music", snapshot.music)
+        pomodoro.setExpanded(snapshot.pomodoro)
+        timeline.setLevel(snapshot.timelineLevel)
+    }
+
+    private func fullscreenStatus(at index: Int) -> FullscreenPinStatus {
+        let module = config.modules[index]
+        let value: String, symbol: String?, progress: Double?
+        switch module.id {
+        case "pomodoro", "timer":
+            value = pomodoro.isSessionActive ? pomodoro.timeText : "专注"
+            symbol = pomodoro.isSessionActive && !pomodoro.isRunning ? "pause.fill" : nil
+            progress = pomodoro.isSessionActive ? floor(pomodoro.progress * 100) / 100 : nil
+        case "music":
+            value = systemApps.musicAvailable ? (systemApps.musicPlaying ? "播放中" : "已暂停") : "音乐"
+            symbol = nil
+            progress = systemApps.musicDuration > 0 ? floor(systemApps.musicElapsed / systemApps.musicDuration * 100) / 100 : nil
+        case "timeline":
+            let span = TimelineScale.day.interval(at: timeline.now, calendar: .current)
+            let percent = min(100, max(0, Int(timeline.now.timeIntervalSince(span.start) / span.duration * 100)))
+            value = "\(percent)%"; symbol = nil; progress = Double(percent) / 100
+        case "reminders":
+            value = moduleStore.reminderAccess ? "\(moduleStore.reminderCount) 项" : "待办"
+            symbol = nil; progress = nil
+        default:
+            value = "便笺"; symbol = nil; progress = nil
+        }
+        return FullscreenPinStatus(moduleID: module.id, value: value, symbol: symbol, progress: progress,
+            accessibility: "全屏固定\(module.title)，\(value)")
+    }
+
+    private func setFullscreenOverlayShown(_ shown: Bool) {
+        guard fullscreenOverlayShown != shown else { return }
+        fullscreenOverlayShown = shown
+        let start = overlay.alphaValue
+        if shown && balls.reveal > 0.01 { overlay.orderFrontRegardless() }
+        fullscreenAnimator.animate(duration: 0.22) { [weak self] t in
+            self?.overlay.alphaValue = start + ((shown ? 1 : 0) - start) * t
+        } completion: { [weak self] in
+            guard let self, !self.fullscreenOverlayShown else { return }
+            self.overlay.orderOut(nil)
+        }
+    }
+
+    private func toggleFullscreenCapsule() {
+        guard fullscreenPin.active, !menuTracking.isActive else { return }
+        if fullscreenPin.expanded { compactFullscreenCapsule() }
+        else {
+            fullscreenPin.expand()
+            if let index = preferredPinnedIndex() { balls.selected = index }
+            showBalls()
+        }
+    }
+
+    private func compactFullscreenCapsule() {
+        guard fullscreenPin.active else { return }
+        overlay.makeFirstResponder(nil)
+        collapseWork?.cancel()
+        fullscreenPin.collapse()
+        controlsArmed = false
+        pointerInsideOverlay = false
+        pointerDragging = false
+        updatePlacement(refreshFullscreen: false)
     }
 
     private func refreshGlassForSpaceChange() {
@@ -1874,7 +2045,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let overlay, let balls, let trigger else { return }
         balls.refreshLongBreakHints()
         let pointer = NSEvent.mouseLocation
-        let inTrigger = trigger.frame.contains(pointer)
+        let inTrigger = !fullscreenPin.active && trigger.frame.contains(pointer)
+        if fullscreenPin.active && !fullscreenPin.expanded {
+            triggerHoverStarted = nil
+            triggerActivated = false
+            overlay.ignoresMouseEvents = true
+            return
+        }
         if inTrigger {
             if triggerHoverStarted == nil { triggerHoverStarted = Date() }
             if !triggerActivated && Date().timeIntervalSince(triggerHoverStarted!) >= 0.25 {
@@ -2061,15 +2238,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         placementTimer?.invalidate()
         pointerTimer?.invalidate()
         backdrop?.stop()
+        fullscreenPinController.hide()
+        fullscreenAnimator.cancel()
         mouseMonitors.forEach(NSEvent.removeMonitor)
         workspaceObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
         placementObservers.forEach(NotificationCenter.default.removeObserver)
     }
 
     private func showBalls(armControls: Bool = true) {
-        if armControls { controlsArmed = true }
         updatePlacement(refreshFullscreen: true)
+        if armControls {
+            controlsArmed = true
+            fullscreenPin.expand()
+            updatePlacement(refreshFullscreen: false)
+        }
         collapseWork?.cancel()
+        if fullscreenPin.active && !fullscreenPin.expanded { return }
         overlay.orderFrontRegardless()
         transition(to: 1)
         if armControls && !pointerInsideOverlay { scheduleCollapse() }
@@ -2084,6 +2268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func beginMenuTracking() {
         menuTracking.begin()
         backdrop?.paused = true
+        fullscreenPinController.pauseInteraction(true)
         setLyricInteraction(true)
         collapseWork?.cancel()
         pointerDragging = false
@@ -2096,7 +2281,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let finished = menuTracking.end()
         setLyricInteraction(false)
         guard finished else { return }
-        backdrop?.paused = false
+        fullscreenPinController.pauseInteraction(false)
+        backdrop?.paused = fullscreenPin.active && !fullscreenPin.expanded
         updateMenuBar()
         refreshSettingsChecks()
         refreshBackdropMenu()
@@ -2115,12 +2301,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let task = DispatchWorkItem { [weak self] in
             guard let self else { return }
             guard self.lyricInteractionCount == 0 else { return }
+            if self.pointerDragging { self.scheduleCollapse(); return }
             if self.overlay.isKeyWindow,
                let editor = self.overlay.firstResponder as? NSTextView, editor.isFieldEditor {
                 // A pointer leaving the capsule must not dismiss an active text edit.
                 self.scheduleCollapse()
                 return
             }
+            if self.fullscreenPin.active { self.compactFullscreenCapsule(); return }
             self.controlsArmed = false
             self.overlay.ignoresMouseEvents = true
             if let index = self.preferredPinnedIndex() {
