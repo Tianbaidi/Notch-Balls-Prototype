@@ -385,7 +385,9 @@ final class PomodoroModel: ObservableObject {
 
     func updateClock() {
         guard let deadline else { return }
-        secondsRemaining = max(0, Int(ceil(deadline.timeIntervalSince(now()))))
+        let next = max(0, Int(ceil(deadline.timeIntervalSince(now()))))
+        guard next != secondsRemaining else { return }
+        secondsRemaining = next
         accountCurrentFocusTime()
         statusChanged?()
         if secondsRemaining == 0 {

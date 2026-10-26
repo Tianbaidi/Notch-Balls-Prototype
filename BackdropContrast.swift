@@ -64,7 +64,15 @@ struct BackdropTone {
 final class BackdropContrastStore: ObservableObject {
     @Published private(set) var enabled: Bool
     @Published private(set) var ready = false
-    var paused = false { didSet { if paused != oldValue { revision += 1; lastSample = -.infinity } } }
+    @Published private(set) var captureFailed = false
+    var paused = false {
+        didSet {
+            guard paused != oldValue else { return }
+            revision += 1
+            lastSample = -.infinity
+            timer?.fireDate = paused ? .distantFuture : Date()
+        }
+    }
     var region: (() -> BackdropRegion?)?
     var statusChanged: (() -> Void)?
     private let defaults: UserDefaults
@@ -111,6 +119,9 @@ final class BackdropContrastStore: ObservableObject {
         defaults.set(value, forKey: enabledKey)
         revision += 1
         tone = BackdropTone()
+        captureFailed = false
+        lastSample = -.infinity
+        retryAfter = 0
         if !value { useSystemAppearance() }
         statusChanged?()
     }
@@ -131,14 +142,19 @@ final class BackdropContrastStore: ObservableObject {
             authorized = requestAuthorization() || authorization()
         }
         if ready != authorized { ready = authorized; statusChanged?() }
-        guard authorized else { useSystemAppearance(); return }
+        guard authorized else { tone = BackdropTone(); useSystemAppearance(); return }
         sampling = true
         lastSample = now
         let generation = revision
         defer { sampling = false }
         do {
-            guard let luminance = try await capture(area), generation == revision,
+            let sample = try await capture(area)
+            guard generation == revision,
                   enabled, !paused, region?() == area else { return }
+            guard let luminance = sample, luminance.isFinite, (0...1).contains(luminance) else {
+                throw NSError(domain: "BackdropCapture", code: 1)
+            }
+            if captureFailed { captureFailed = false; statusChanged?() }
             let changed = tone.ingest(luminance, time: ProcessInfo.processInfo.systemUptime)
             if let dark = changed ?? tone.isDark {
                 if !foreground.tracksBackdrop { foreground.tracksBackdrop = true }
@@ -148,24 +164,38 @@ final class BackdropContrastStore: ObservableObject {
             guard generation == revision, enabled, !paused, region?() == area else { return }
             retryAfter = now + 4
             tone = BackdropTone()
+            if !captureFailed { captureFailed = true; statusChanged?() }
             useSystemAppearance()
         }
     }
 
-    private static func captureLuminance(_ region: BackdropRegion) async throws -> Double? {
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let display = content.displays.first(where: { $0.displayID == region.displayID }) else { return nil }
-        let excluded = content.windows.filter { region.excludedWindows.contains($0.windowID) }
-        let filter = SCContentFilter(display: display, excludingWindows: excluded)
-        if #available(macOS 14.2, *) { filter.includeMenuBar = true }
+    static func captureConfiguration(for region: BackdropRegion) -> SCStreamConfiguration {
         let config = SCStreamConfiguration()
         config.sourceRect = region.sourceRect
         config.width = 48
         config.height = 24
+        // A compact capsule is much wider than this thumbnail. Letterboxing it
+        // puts black padding in most pixels and makes the median always dark.
+        config.preservesAspectRatio = false
         config.showsCursor = false
         config.capturesAudio = false
         config.ignoreShadowsDisplay = true
         config.colorSpaceName = CGColorSpace.sRGB
+        return config
+    }
+
+    private static func captureLuminance(_ region: BackdropRegion) async throws -> Double? {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        guard let display = content.displays.first(where: { $0.displayID == region.displayID }) else {
+            throw NSError(domain: "BackdropCapture", code: 2)
+        }
+        let excluded = content.windows.filter { region.excludedWindows.contains($0.windowID) }
+        let ownApps = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
+        // Excluding the application also covers panels not yet in the window list.
+        let filter = ownApps.isEmpty ? SCContentFilter(display: display, excludingWindows: excluded)
+            : SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: [])
+        if #available(macOS 14.2, *) { filter.includeMenuBar = true }
+        let config = captureConfiguration(for: region)
         let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
         // Only this downsampled local region is inspected. Nothing is retained or written to disk.
         return BackdropTone.luminance(of: image)

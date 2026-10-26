@@ -44,15 +44,16 @@ previewSystem.loadPreview()
 let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
 try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
 func render<V: View>(_ view: V, name: String, size: CGSize, dark: Bool = false,
-                     settle: TimeInterval = 0.25, motionFrames: Int = 0) {
-    let root = view.environment(\.colorScheme, dark ? .dark : .light)
+                     settle: TimeInterval = 0.25, motionFrames: Int = 0, systemDark: Bool? = nil) {
+    let appearanceDark = systemDark ?? dark
+    let root = view.environment(\.colorScheme, appearanceDark ? .dark : .light)
         .frame(width: size.width, height: size.height)
         .padding(24)
         .background(dark ? Color(red: 0.08, green: 0.10, blue: 0.14) : Color(red: 0.94, green: 0.95, blue: 0.97))
     let host = NSHostingView(rootView: root)
     let rect = CGRect(x: 0, y: 0, width: size.width + 48, height: size.height + 48)
     let window = NSWindow(contentRect: rect, styleMask: .borderless, backing: .buffered, defer: false)
-    window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+    window.appearance = NSAppearance(named: appearanceDark ? .darkAqua : .aqua)
     window.contentView = host
     host.frame = rect
     window.orderFront(nil)
@@ -530,7 +531,16 @@ extension AppDelegate {
         endSessionMenuItem = NSMenuItem(title: "end", action: nil, keyEquivalent: "")
         autoNoiseItem = NSMenuItem(title: "noise", action: nil, keyEquivalent: "")
         pointerInsideOverlay = true
+        placementTimer = Timer(timeInterval: 0.5, repeats: true) { _ in }
+        pointerTimer = Timer(timeInterval: 1.0 / 30, repeats: true) { _ in }
+        RunLoop.main.add(placementTimer!, forMode: .common)
+        RunLoop.main.add(pointerTimer!, forMode: .common)
     }
+    var trackingPaused: Bool {
+        placementTimer!.fireDate.timeIntervalSinceNow > 3600 && pointerTimer!.fireDate.timeIntervalSinceNow > 3600
+    }
+    var trackingActive: Bool { menuTracking.isActive }
+    func prepareNativeTracking(_ menu: NSMenu) { configureStatusMenu(menu); observeMenuTracking() }
     var trackingTitle: String { statusItem.button?.title ?? "" }
     var trackingSummary: String { statsMenuItem.title }
     func openTrackingPreview() { beginMenuTracking() }
@@ -538,22 +548,102 @@ extension AppDelegate {
     func tickTrackingPreview() {
         updateMenuBar(); refreshSettingsChecks(); updatePlacement(refreshFullscreen: true); updatePointerRouting()
     }
-    func finishTrackingPreview() { NSStatusBar.system.removeStatusItem(statusItem) }
+    func finishTrackingPreview() {
+        placementTimer?.invalidate(); pointerTimer?.invalidate()
+        menuObservers.forEach(NotificationCenter.default.removeObserver)
+        NSStatusBar.system.removeStatusItem(statusItem)
+    }
 }
 let trackingDelegate = AppDelegate(config: testConfig, moduleStore: previewStore,
     systemApps: previewSystem, pomodoro: previewPomodoro)
 trackingDelegate.prepareTrackingPreview()
 trackingDelegate.openTrackingPreview()
 trackingDelegate.openTrackingPreview()
+assert(trackingDelegate.trackingPaused)
 for _ in 0..<120 { trackingDelegate.tickTrackingPreview() }
 assert(trackingDelegate.trackingTitle == "snapshot" && trackingDelegate.trackingSummary == "snapshot")
 trackingDelegate.closeTrackingPreview()
 assert(trackingDelegate.trackingTitle == "snapshot")
 trackingDelegate.closeTrackingPreview()
+RunLoop.main.run(until: Date().addingTimeInterval(0.02))
 assert(trackingDelegate.trackingTitle != "snapshot" && trackingDelegate.trackingSummary != "snapshot")
+assert(!trackingDelegate.trackingPaused)
 trackingDelegate.closeTrackingPreview()
 trackingDelegate.finishTrackingPreview()
 print("PASS: native menu tracking freezes status/menu mutations across nested submenus and resumes once")
+
+// Delegate callbacks and notifications refer to the same menus and must not
+// double-count them, or background sampling can remain paused after closing.
+let menuDelegate = AppDelegate(config: testConfig, moduleStore: previewStore,
+    systemApps: previewSystem, pomodoro: previewPomodoro)
+menuDelegate.prepareTrackingPreview()
+let nativeMenu = NSMenu(title: "Synthetic status menu")
+nativeMenu.addItem(withTitle: "First", action: nil, keyEquivalent: "")
+let childMenu = NSMenu(title: "Child")
+childMenu.addItem(withTitle: "Second", action: nil, keyEquivalent: "")
+let parentItem = NSMenuItem(title: "Options", action: nil, keyEquivalent: "")
+parentItem.submenu = childMenu
+nativeMenu.addItem(parentItem)
+menuDelegate.prepareNativeTracking(nativeMenu)
+menuDelegate.menuWillOpen(nativeMenu)
+NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: nativeMenu)
+menuDelegate.menuWillOpen(childMenu)
+NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: childMenu)
+menuDelegate.menuDidClose(childMenu)
+NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: childMenu)
+assert(menuDelegate.trackingActive && menuDelegate.trackingPaused)
+menuDelegate.menuDidClose(nativeMenu)
+NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: nativeMenu)
+// An immediately reopened menu must invalidate the queued resume.
+menuDelegate.menuWillOpen(nativeMenu)
+RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+assert(menuDelegate.trackingActive && menuDelegate.trackingPaused)
+menuDelegate.menuDidClose(nativeMenu)
+RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+assert(!menuDelegate.trackingActive && !menuDelegate.trackingPaused)
+
+// Exercise an actual AppKit popup as well as synthetic notification ordering.
+final class MenuSelectionProbe: NSObject {
+    var count = 0
+    @objc func choose(_ sender: Any?) { count += 1 }
+}
+let selectionProbe = MenuSelectionProbe()
+let selectionMenu = NSMenu(title: "Synthetic native menu selection")
+let selectionItem = NSMenuItem(title: "Choose sample", action: #selector(MenuSelectionProbe.choose(_:)), keyEquivalent: "")
+selectionItem.target = selectionProbe
+selectionMenu.addItem(selectionItem)
+menuDelegate.prepareNativeTracking(selectionMenu)
+var sawNativeTracking = false
+let selectionTimer = Timer(timeInterval: 0.15, repeats: false) { _ in
+    sawNativeTracking = menuDelegate.trackingActive && menuDelegate.trackingPaused
+    selectionMenu.performActionForItem(at: 0)
+    selectionMenu.cancelTracking()
+}
+RunLoop.main.add(selectionTimer, forMode: .common)
+let selectionLocation = NSScreen.main.map { CGPoint(x: $0.frame.midX, y: $0.frame.midY) } ?? .zero
+_ = selectionMenu.popUp(positioning: nil, at: selectionLocation, in: nil)
+selectionTimer.invalidate()
+RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+assert(sawNativeTracking && selectionProbe.count == 1)
+assert(!menuDelegate.trackingActive && !menuDelegate.trackingPaused)
+menuDelegate.finishTrackingPreview()
+print("PASS: menu delegate/notification deduplication, nested close and immediate reopen keep timers correctly suspended")
+print("PASS: actual native popup opens, invokes a selected action and resumes timers after closing")
+
+let pausedAnimator = CapsuleAnimator()
+var pausedSteps = 0
+var resumedAnimation = false
+pausedAnimator.animate(duration: 0.12, step: { _ in pausedSteps += 1 }, completion: { resumedAnimation = true })
+RunLoop.main.run(until: Date().addingTimeInterval(0.04))
+pausedAnimator.setPaused(true)
+let priorSteps = pausedSteps
+RunLoop.main.run(until: Date().addingTimeInterval(0.16))
+assert(pausedSteps == priorSteps)
+if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { assert(!resumedAnimation) }
+pausedAnimator.setPaused(false)
+RunLoop.main.run(until: Date().addingTimeInterval(0.16))
+assert(resumedAnimation)
+print("PASS: menu pause stops animation timer callbacks and resumes unfinished transitions")
 
 var tone = BackdropTone()
 assert(tone.ingest(0.9, time: 0) == false)
@@ -569,6 +659,10 @@ assert(tone.ingest(.nan, time: 6) == nil)
 let negativeScreen = BackdropRegion(frame: CGRect(x: -950, y: 870, width: 400, height: 40),
     screenFrame: CGRect(x: -1000, y: 0, width: 1000, height: 1000), displayID: 0, excludedWindows: [])
 assert(negativeScreen.sourceRect == CGRect(x: 50, y: 90, width: 400, height: 40))
+let thumbnailConfig = BackdropContrastStore.captureConfiguration(for: negativeScreen)
+assert(!thumbnailConfig.preservesAspectRatio, "Wide backgrounds must fill the sample instead of adding black bars")
+assert(thumbnailConfig.sourceRect == negativeScreen.sourceRect)
+assert(thumbnailConfig.width == 48 && thumbnailConfig.height == 24 && !thumbnailConfig.showsCursor && !thumbnailConfig.capturesAudio)
 func solidBackdrop(_ color: CGColor) -> CGImage {
     let context = CGContext(data: nil, width: 16, height: 16, bitsPerComponent: 8, bytesPerRow: 64,
         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
@@ -649,6 +743,13 @@ Task { @MainActor in
     pendingCapture!.resume(returning: 0.95)
     await recoveredTask.value
     assert(ink.tracksBackdrop)
+    late.setEnabled(false); late.setEnabled(true)
+    pendingCapture = nil
+    let emptyTask = Task { @MainActor in await late.sampleNow() }
+    while pendingCapture == nil { await Task.yield() }
+    pendingCapture!.resume(returning: nil)
+    await emptyTask.value
+    assert(late.captureFailed && !ink.tracksBackdrop && late.ready)
     print("PASS: backdrop reuses existing authorization, requests once, pauses for menus, retains intent after revocation and rejects disabled late captures")
     backdropTestsDone = true
 }
@@ -673,6 +774,25 @@ render(adaptivePill(), name: "adaptive-ink-light-background", size: CGSize(width
 adaptiveInk.adapt(isDark: true)
 RunLoop.main.run(until: Date().addingTimeInterval(0.32))
 render(adaptivePill(), name: "adaptive-ink-dark-background", size: CGSize(width: 464, height: 36), dark: true)
+assert(adaptiveInk.colorScheme == .dark)
+render(adaptivePill(), name: "adaptive-dark-under-light-system", size: CGSize(width: 464, height: 36), dark: true, systemDark: false)
+adaptiveInk.adapt(isDark: false, animated: false)
+assert(adaptiveInk.colorScheme == .light)
+render(adaptivePill(), name: "adaptive-light-under-dark-system", size: CGSize(width: 464, height: 36), dark: false, systemDark: true)
+if #available(macOS 26.0, *) {
+    func surfaceLuminance(_ name: String) -> Double {
+        let rep = NSBitmapImageRep(data: try! Data(contentsOf: output.appendingPathComponent(name + ".png")))!
+        let image = rep.cgImage!
+        // A blank strip inside the capsule, below its top edge and above text.
+        let strip = image.cropping(to: CGRect(x: Double(image.width) * 0.40, y: Double(image.height) * 0.36,
+            width: Double(image.width) * 0.20, height: Double(image.height) * 0.04))!
+        return BackdropTone.luminance(of: strip)!
+    }
+    assert(surfaceLuminance("adaptive-dark-under-light-system") < 0.3,
+           "Glass must follow the sampled dark background even while the system is light")
+    assert(surfaceLuminance("adaptive-light-under-dark-system") > 0.5,
+           "Glass must follow the sampled light background even while the system is dark")
+}
 if #available(macOS 26.0, *) {
     let backing = CapsuleGlassBacking()
     for fraction in [0.0, 0.3, 0.5, 0.8, 1.0] {

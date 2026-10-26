@@ -516,7 +516,7 @@ struct TimelineCapsule: View {
                 .opacity(store.closing ? 0 : 1)
                 .animation(reduceMotion ? nil : .easeOut(duration: TimelineMotion.retireDuration), value: store.closing)
             ForEach(TimelineScale.allCases.prefix(store.renderedLevel)) { scale in
-                TimelineTrack(scale: scale, store: store, animated: !reduceMotion,
+                TimelineTrack(scale: scale, store: store, animated: !reduceMotion && !interaction.menuTracking,
                               passive: interaction.isPinned("timeline"))
                     .frame(height: TimelineDesign.rowHeight)
                     .opacity(store.retiringFrom.map { scale.rawValue >= $0 } == true ? 0 : 1)

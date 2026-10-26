@@ -118,6 +118,9 @@ final class CapsuleForeground: ObservableObject {
     private var target: Bool
     private let animator = CapsuleAnimator()
     var palette: CapsuleInkPalette { CapsuleInkPalette(lightFraction: lightFraction) }
+    var colorScheme: ColorScheme { lightFraction >= 0.5 ? .dark : .light }
+
+    func setUpdatesPaused(_ paused: Bool) { animator.setPaused(paused) }
 
     init(isDark: Bool = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua) {
         target = isDark
@@ -184,6 +187,21 @@ struct CapsuleButtonStyle: ButtonStyle {
 /// during button tracking; uptime prevents a system clock correction causing jumps.
 final class CapsuleAnimator {
     private var timer: Timer?
+    private(set) var isPaused = false
+    private var startedAt: TimeInterval = 0
+    private var pausedAt: TimeInterval = 0
+    func setPaused(_ paused: Bool) {
+        guard paused != isPaused else { return }
+        isPaused = paused
+        let now = ProcessInfo.processInfo.systemUptime
+        if paused {
+            pausedAt = now
+            timer?.fireDate = .distantFuture
+        } else {
+            startedAt += now - pausedAt
+            timer?.fireDate = Date()
+        }
+    }
     func cancel() { timer?.invalidate(); timer = nil }
     deinit { timer?.invalidate() }
     static func progress(_ elapsed: Double, duration: Double) -> CGFloat {
@@ -197,13 +215,16 @@ final class CapsuleAnimator {
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || duration <= 0 {
             step(1); completion(); return
         }
-        let start = ProcessInfo.processInfo.systemUptime
-        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { timer in
-            let elapsed = ProcessInfo.processInfo.systemUptime - start
+        startedAt = ProcessInfo.processInfo.systemUptime
+        if isPaused { pausedAt = startedAt }
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+            guard let self, !self.isPaused else { return }
+            let elapsed = ProcessInfo.processInfo.systemUptime - self.startedAt
             step(timing?(min(1, max(0, elapsed / duration))) ?? Self.progress(elapsed, duration: duration))
             if elapsed >= duration { timer.invalidate(); completion() }
         }
         self.timer = timer
+        if isPaused { timer.fireDate = .distantFuture }
         RunLoop.main.add(timer, forMode: .common)
     }
 }
