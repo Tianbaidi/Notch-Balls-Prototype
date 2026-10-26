@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import ScreenCaptureKit
+import OSLog
 
 struct BackdropRegion: Equatable {
     let frame: CGRect
@@ -80,6 +81,9 @@ final class BackdropContrastStore: ObservableObject {
     private let authorization: () -> Bool
     private let requestAuthorization: () -> Bool
     private let capture: (BackdropRegion) async throws -> Double?
+    private let permissionIdentity: String
+    private let logger = Logger(subsystem: "local.codex.NotchBallsPrototype", category: "BackdropContrast")
+    private var lastOutcome: String?
     private var tone = BackdropTone()
     private var timer: Timer?
     private var sampling = false
@@ -88,16 +92,19 @@ final class BackdropContrastStore: ObservableObject {
     private var revision = 0
     private let enabledKey = "notch.backdrop.enabled.v1"
     private let askedKey = "notch.backdrop.permissionAsked.v1"
+    private let askedBuildKey = "notch.backdrop.permissionAskedBuild.v1"
 
     init(foreground: CapsuleForeground, defaults: UserDefaults = .standard,
          startTimer: Bool = true, authorization: @escaping () -> Bool = CGPreflightScreenCaptureAccess,
          requestAuthorization: @escaping () -> Bool = CGRequestScreenCaptureAccess,
+         permissionIdentity: String = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "development",
          capture: @escaping (BackdropRegion) async throws -> Double? = BackdropContrastStore.captureLuminance) {
         self.foreground = foreground
         self.defaults = defaults
         self.authorization = authorization
         self.requestAuthorization = requestAuthorization
         self.capture = capture
+        self.permissionIdentity = permissionIdentity
         enabled = defaults.object(forKey: enabledKey) == nil || defaults.bool(forKey: enabledKey)
         ready = authorization()
         if startTimer {
@@ -131,18 +138,37 @@ final class BackdropContrastStore: ObservableObject {
         foreground.adapt(isDark: NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
     }
 
+    private func report(_ outcome: String, luminance: Double? = nil) {
+        guard outcome != lastOutcome else { return }
+        lastOutcome = outcome
+        let value = luminance.map { String(format: "%.3f", $0) } ?? "none"
+        // State and one scalar only: never log images, window titles or media metadata.
+        logger.notice("state=\(outcome, privacy: .public) authorized=\(self.ready, privacy: .public) luminance=\(value, privacy: .public) ink=\(self.foreground.lightFraction, privacy: .public)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self, self.lastOutcome == outcome else { return }
+            self.logger.notice("settled=\(outcome, privacy: .public) ink=\(self.foreground.lightFraction, privacy: .public) tracksBackdrop=\(self.foreground.tracksBackdrop, privacy: .public)")
+        }
+    }
+
     @MainActor func sampleNow() async {
-        guard enabled, !paused, !sampling, let area = region?(),
-              area.frame.width >= 4, area.frame.height >= 4 else { return }
+        guard enabled else { report("disabled"); return }
+        guard !paused else { report("paused"); return }
+        guard !sampling else { return }
+        guard let area = region?(), area.frame.width >= 4, area.frame.height >= 4 else {
+            report("not-visible"); return
+        }
         let now = ProcessInfo.processInfo.systemUptime
         guard now >= retryAfter, now - lastSample >= (ProcessInfo.processInfo.isLowPowerModeEnabled ? 1.2 : 0.4) else { return }
         var authorized = authorization()
-        if !authorized && !defaults.bool(forKey: askedKey) {
+        if !authorized && (!defaults.bool(forKey: askedKey) || defaults.string(forKey: askedBuildKey) != permissionIdentity) {
             defaults.set(true, forKey: askedKey)
+            defaults.set(permissionIdentity, forKey: askedBuildKey)
             authorized = requestAuthorization() || authorization()
         }
         if ready != authorized { ready = authorized; statusChanged?() }
-        guard authorized else { tone = BackdropTone(); useSystemAppearance(); return }
+        guard authorized else {
+            tone = BackdropTone(); useSystemAppearance(); report("permission-required"); return
+        }
         sampling = true
         lastSample = now
         let generation = revision
@@ -159,6 +185,7 @@ final class BackdropContrastStore: ObservableObject {
             if let dark = changed ?? tone.isDark {
                 if !foreground.tracksBackdrop { foreground.tracksBackdrop = true }
                 foreground.adapt(isDark: dark)
+                report(dark ? "dark-background" : "light-background", luminance: luminance)
             }
         } catch {
             guard generation == revision, enabled, !paused, region?() == area else { return }
@@ -166,6 +193,8 @@ final class BackdropContrastStore: ObservableObject {
             tone = BackdropTone()
             if !captureFailed { captureFailed = true; statusChanged?() }
             useSystemAppearance()
+            let failure = error as NSError
+            report("capture-failed:\(failure.domain):\(failure.code)")
         }
     }
 

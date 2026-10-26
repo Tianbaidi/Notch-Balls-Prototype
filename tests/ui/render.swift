@@ -716,6 +716,23 @@ Task { @MainActor in
     restored.region = { negativeScreen }
     await restored.sampleNow()
 
+    let renewedDefaults = UserDefaults(suiteName: "notch-backdrop-renewed-\(UUID().uuidString)")!
+    renewedDefaults.set(true, forKey: "notch.backdrop.permissionAsked.v1")
+    renewedDefaults.set("older-build", forKey: "notch.backdrop.permissionAskedBuild.v1")
+    var renewalRequests = 0
+    let renewed = BackdropContrastStore(foreground: ink, defaults: renewedDefaults, startTimer: false,
+        authorization: { false }, requestAuthorization: { renewalRequests += 1; return false },
+        permissionIdentity: "new-build", capture: { _ in fatalError("Denied renewal must not capture") })
+    renewed.region = { negativeScreen }
+    await renewed.sampleNow(); await renewed.sampleNow()
+    assert(renewalRequests == 1 && !renewed.ready && !ink.tracksBackdrop)
+    let sameBuild = BackdropContrastStore(foreground: ink, defaults: renewedDefaults, startTimer: false,
+        authorization: { false }, requestAuthorization: { renewalRequests += 1; return false },
+        permissionIdentity: "new-build", capture: { _ in fatalError("Denied renewal must not capture") })
+    sameBuild.region = { negativeScreen }
+    await sameBuild.sampleNow()
+    assert(renewalRequests == 1, "Restarting the same build must not repeatedly prompt")
+
     let grantedDefaults = UserDefaults(suiteName: "notch-backdrop-granted-\(UUID().uuidString)")!
     var pendingCapture: CheckedContinuation<Double?, Error>?
     let late = BackdropContrastStore(foreground: ink, defaults: grantedDefaults, startTimer: false,
@@ -800,6 +817,12 @@ if #available(macOS 26.0, *) {
         assert(backing.light.style == .clear && backing.dark.style == .clear)
         assert(backing.light.alphaValue + backing.dark.alphaValue <= 0.22001)
     }
+    let unavailableInk = CapsuleForeground(isDark: false)
+    assert(!unavailableInk.tracksBackdrop)
+    NativePillGlass(clearPassThrough: true, corner: 18, lightFraction: unavailableInk.lightFraction).configure(backing)
+    assert(backing.light.style == .clear && backing.dark.style == .clear)
+    assert(backing.light.alphaValue + backing.dark.alphaValue <= 0.22001,
+           "Unavailable sampling must retain the transparent glass opacity cap")
 }
 print("PASS: adaptive foregrounds render in both backgrounds and blended clear backing never exceeds its opacity cap")
 
