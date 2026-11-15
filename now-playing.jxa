@@ -17,7 +17,10 @@ function run(argv) {
     var info = item && item.nowPlayingInfo;
     function field(key) { return info ? unwrap(info.objectForKey(key)) : null; }
     var title = field('kMRMediaRemoteNowPlayingInfoTitle');
-    if (!title) return JSON.stringify({available: false});
+    var duration = field('kMRMediaRemoteNowPlayingInfoDuration');
+    if (!title && !(bundle === 'com.apple.controlcenter' && duration > 0)) {
+        return JSON.stringify({available: false});
+    }
     if (argv.length && argv[0] === 'artwork') {
         ObjC.bindFunction('objc_msgSend', ['void', ['id', 'selector', 'id', 'id']]);
         var request = Request.alloc.initWithPlayerPath(path);
@@ -48,15 +51,19 @@ function run(argv) {
         return JSON.stringify({available: true, sent: true});
     }
     var position = null;
-    try { position = Number(item.metadata.calculatedPlaybackPosition); } catch (_) {}
+    try {
+        var calculated = unwrap(item.metadata.calculatedPlaybackPosition);
+        if (calculated !== null) position = Number(calculated);
+    } catch (_) {}
     return JSON.stringify({
         available: true,
         bundle: bundle,
         title: title,
         artist: field('kMRMediaRemoteNowPlayingInfoArtist'),
         album: field('kMRMediaRemoteNowPlayingInfoAlbum'),
-        duration: field('kMRMediaRemoteNowPlayingInfoDuration'),
-        elapsed: isFinite(position) && position >= 0 ? position : field('kMRMediaRemoteNowPlayingInfoElapsedTime'),
+        duration: duration,
+        artworkIdentifier: field('kMRMediaRemoteNowPlayingInfoArtworkIdentifier'),
+        elapsed: position !== null && isFinite(position) && position >= 0 ? position : field('kMRMediaRemoteNowPlayingInfoElapsedTime'),
         playing: Boolean(Request.localIsPlaying)
     });
 }

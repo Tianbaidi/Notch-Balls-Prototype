@@ -50,6 +50,7 @@ final class SystemAppsStore: ObservableObject {
     @Published private(set) var plainLyrics: String?
     @Published private(set) var lyricStatus = "开启后查询逐行歌词"
     @Published private(set) var lyricSourceLabel = "歌词"
+    @Published private(set) var airPlayLyrics: AirPlayLyricsDetector.Status?
     @Published private(set) var onlineLyricsEnabled = UserDefaults.standard.bool(forKey: "notch.music.onlineLyrics.v1")
     @Published private(set) var neteaseLyricsEnabled = UserDefaults.standard.bool(forKey: "notch.music.neteaseLyrics.v1")
     @Published private(set) var musicPinned = UserDefaults.standard.bool(forKey: "notch.music.pinned.v1")
@@ -66,6 +67,7 @@ final class SystemAppsStore: ObservableObject {
     @Published private(set) var lyricsSearching = false
     @Published private(set) var lyricsTrackKey: String?
     private var musicIdentity: MusicTrackIdentity?
+    private var airPlayDetector = AirPlayLyricsDetector()
     private var missingMusicSnapshots = 0
     private var lyricSearchWindow: LyricSearchWindowController?
     private var lyricLookupKey: String?
@@ -181,8 +183,9 @@ final class SystemAppsStore: ObservableObject {
         }
     }
 
-    private func acceptMusicSnapshot(_ snapshot: NowPlayingSnapshot) {
-        guard snapshot.available, let incomingTitle = snapshot.title, !incomingTitle.isEmpty else {
+    private func acceptMusicSnapshot(_ snapshot: NowPlayingSnapshot, uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        let incomingTitle = snapshot.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard snapshot.available, !incomingTitle.isEmpty || snapshot.isAirPlayReceiver else {
             missingMusicSnapshots += 1
             guard missingMusicSnapshots >= 3 else { return }
             self.musicAvailable = false
@@ -196,24 +199,20 @@ final class SystemAppsStore: ObservableObject {
             self.musicElapsed = 0
             self.musicDuration = 0
             self.currentPlayerBundle = nil
-            self.timedLyrics = []
-            self.plainLyrics = nil
-            self.lyricLookupKey = nil
-            self.lyricsTrackKey = nil
             self.musicIdentity = nil
-            self.lyricSearchTask?.cancel()
-            self.lyricsSearching = false
-            self.lyricCandidates = []
-            self.selectedLyricID = nil
-            self.lyricOffset = 0
-            self.lyricSourceLabel = "歌词"
+            self.airPlayDetector = AirPlayLyricsDetector()
+            self.airPlayLyrics = nil
+            self.resetLyrics(for: nil)
             self.lyricStatus = "等待播放"
-            self.lyricSearchSummary = ""
             return
         }
         missingMusicSnapshots = 0
+        let airPlayStatus = airPlayDetector.update(snapshot, uptime: uptime)
+        if airPlayLyrics != airPlayStatus { airPlayLyrics = airPlayStatus }
+        let hasTrackTitle = airPlayStatus == nil || airPlayStatus == .notDetected
+        let title = hasTrackTitle ? incomingTitle : "AirPlay 播放"
         let duration = snapshot.duration.flatMap { $0.isFinite && $0 > 0 && $0 < 604800 ? $0 : nil }
-        let identity = MusicTrackIdentity(title: incomingTitle, artist: snapshot.artist ?? "",
+        let identity = MusicTrackIdentity(title: title, artist: snapshot.artist ?? "",
             album: snapshot.album ?? "", bundle: snapshot.bundle, duration: duration ?? 0)
         let sameTrack = musicIdentity?.matches(identity) == true
         if !sameTrack { musicIdentity = identity }
@@ -226,18 +225,23 @@ final class SystemAppsStore: ObservableObject {
                 duration: old.duration > 0 ? old.duration : identity.duration)
         }
         self.musicAvailable = true
-        let title = incomingTitle
         let artist = snapshot.artist.flatMap { $0.isEmpty ? nil : $0 } ?? (sameTrack ? musicArtist : "未知歌手")
         self.musicTitle = title
         self.musicArtist = artist
         self.musicAlbum = snapshot.album.flatMap { $0.isEmpty ? nil : $0 } ?? (sameTrack ? musicAlbum : "")
         self.currentPlayerBundle = snapshot.bundle ?? (sameTrack ? currentPlayerBundle : nil)
-        self.musicSource = currentPlayerBundle.flatMap {
+        self.musicSource = snapshot.isAirPlayReceiver ? "AirPlay" : currentPlayerBundle.flatMap {
             NSRunningApplication.runningApplications(withBundleIdentifier: $0).first?.localizedName
         } ?? "正在播放"
         self.musicPlaying = snapshot.playing ?? (sameTrack ? musicPlaying : false)
         self.musicElapsed = snapshot.elapsed.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil } ?? (sameTrack ? musicElapsed : 0)
         self.musicDuration = duration ?? (sameTrack ? musicDuration : 0)
+        let airPlayArtworkKey = airPlayDetector.trackID?.uuidString
+        if !hasTrackTitle {
+            if lyricsTrackKey != nil { resetLyrics(for: nil) }
+            if let airPlayArtworkKey { refreshArtwork(for: airPlayArtworkKey) }
+            return
+        }
         let proposedKey = title + "\u{1f}" + artist + "\u{1f}"
             + self.musicAlbum + "\u{1f}" + String(Int(self.musicDuration))
         let key: String
@@ -248,30 +252,37 @@ final class SystemAppsStore: ObservableObject {
             }
             key = MusicTrackIdentity.persistedKey(proposedKey, existing: storedKeys)
         }
-        if self.artworkKey != key {
-            self.artworkKey = key
-            self.musicArtwork = nil
-            self.fetchArtwork(key: key)
-        }
+        refreshArtwork(for: airPlayArtworkKey ?? key)
         if !sameTrack || self.lyricsTrackKey != key {
-            self.lyricsTrackKey = key
-            self.lyricSearchTask?.cancel()
-            self.lyricsSearching = false
-            self.lyricLookupKey = nil
-            self.timedLyrics = []
-            self.plainLyrics = nil
-            self.lyricCandidates = []
-            self.selectedLyricID = nil
-            self.lyricSearchSummary = ""
-            self.lyricOffset = (UserDefaults.standard.dictionary(forKey: "notch.music.lyricOffsets.v1")?[key] as? Double) ?? 0
-            self.lyricStatus = "点开选择歌词来源"
-            self.lyricSourceLabel = "歌词"
-            self.restoreLocalLyrics(key: key)
+            resetLyrics(for: key)
         }
         if (self.onlineLyricsEnabled || self.neteaseLyricsEnabled || self.extraLyricsEnabled || self.independentLyricsEnabled) &&
            self.lyricLookupKey == nil {
             self.retryLyrics()
         }
+    }
+
+    private func resetLyrics(for key: String?) {
+        lyricsTrackKey = key
+        lyricSearchTask?.cancel()
+        lyricsSearching = false
+        lyricLookupKey = nil
+        timedLyrics = []
+        plainLyrics = nil
+        lyricCandidates = []
+        selectedLyricID = nil
+        lyricSearchSummary = ""
+        lyricOffset = key.flatMap { UserDefaults.standard.dictionary(forKey: "notch.music.lyricOffsets.v1")?[$0] as? Double } ?? 0
+        lyricStatus = "点开选择歌词来源"
+        lyricSourceLabel = "歌词"
+        if let key { restoreLocalLyrics(key: key) }
+    }
+
+    private func refreshArtwork(for key: String) {
+        guard artworkKey != key else { return }
+        artworkKey = key
+        musicArtwork = nil
+        fetchArtwork(key: key)
     }
 
     func musicCommand(_ command: String) {
@@ -591,7 +602,26 @@ final class SystemAppsStore: ObservableObject {
 
     var musicSourceBundle: String? { currentPlayerBundle }
 
+    var hasLiveLyric: Bool {
+        if case .receiving(.some) = airPlayLyrics { return true }
+        return false
+    }
+
+    var airPlayLyricLabel: String? {
+        switch airPlayLyrics {
+        case .checking: return "AirPlay · 检测中"
+        case .notDetected: return "AirPlay · 未检测到实时歌词"
+        case .receiving: return "AirPlay · 实时歌词"
+        case nil: return nil
+        }
+    }
+
     var currentLyricText: String {
+        switch airPlayLyrics {
+        case .checking: return "正在检测实时歌词…"
+        case .receiving(let line): return line ?? "等待下一句歌词"
+        case .notDetected, nil: break
+        }
         if let index = currentLyricIndex { return timedLyrics[index].text }
         if let next = timedLyrics.first { return next.text }
         if let first = plainLyrics?.split(whereSeparator: \.isNewline).first,
@@ -624,6 +654,8 @@ struct LyricSearchHost: View {
         Group {
             if let key = store.lyricsTrackKey, store.musicAvailable {
                 LyricSearchView(store: store, key: key, query: store.lyricSearchQuery).id(key)
+            } else if let label = store.airPlayLyricLabel {
+                ContentUnavailableView(label, systemImage: "airplay.audio", description: Text(store.currentLyricText))
             } else {
                 ContentUnavailableView("先播放一首歌曲", systemImage: "music.note",
                     description: Text("播放后可按歌名、歌手和专辑寻找歌词。"))

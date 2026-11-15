@@ -11,6 +11,100 @@ struct NowPlayingSnapshot: Decodable {
     let duration: Double?
     let elapsed: Double?
     let playing: Bool?
+    var artworkIdentifier: String?
+
+    var isAirPlayReceiver: Bool { bundle == "com.apple.controlcenter" }
+}
+
+struct AirPlayLyricsDetector {
+    enum Status: Equatable {
+        case checking
+        case notDetected
+        case receiving(String?)
+    }
+
+    private struct Observation {
+        let title: String?
+        let artist: String
+        let album: String
+        let artwork: String?
+        let duration: Double?
+        let elapsed: Double?
+        let uptime: TimeInterval
+
+        init(_ snapshot: NowPlayingSnapshot, uptime: TimeInterval) {
+            let title = snapshot.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.title = title.flatMap { $0.isEmpty ? nil : $0 }
+            artist = snapshot.artist ?? ""
+            album = snapshot.album ?? ""
+            artwork = snapshot.artworkIdentifier
+            duration = snapshot.duration.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+            elapsed = snapshot.elapsed.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+            self.uptime = uptime
+        }
+
+        func follows(_ previous: Observation) -> Bool {
+            let interval = uptime - previous.uptime
+            guard interval >= 0, interval <= 5, artist == previous.artist, album == previous.album else { return false }
+            if let artwork, let oldArtwork = previous.artwork, artwork != oldArtwork { return false }
+            if let duration, let oldDuration = previous.duration, abs(duration - oldDuration) > 1 { return false }
+            if let elapsed, let oldElapsed = previous.elapsed {
+                let advance = elapsed - oldElapsed
+                return advance >= -0.5 && advance <= interval + 2
+            }
+            return true
+        }
+    }
+
+    private var previous: Observation?
+    private var titleChangedAt: Observation?
+    private var recentTitles: Set<String> = []
+    private var confirmed = false
+    private(set) var trackID: UUID?
+
+    mutating func update(_ snapshot: NowPlayingSnapshot, uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Status? {
+        guard snapshot.available, snapshot.isAirPlayReceiver else {
+            self = Self()
+            return nil
+        }
+        let current = Observation(snapshot, uptime: uptime)
+        defer { previous = current }
+        guard let previous, current.follows(previous) else {
+            trackID = UUID()
+            titleChangedAt = current
+            recentTitles = Set([current.title].compactMap { $0 })
+            confirmed = false
+            return .checking
+        }
+        if current.title != previous.title {
+            if !confirmed {
+                if uptime - (titleChangedAt?.uptime ?? uptime) > 12 {
+                    recentTitles = Set([previous.title].compactMap { $0 })
+                }
+                // Real-time lines arrive during continuous playback of the same item.
+                if snapshot.playing == true, let title = current.title, let elapsed = current.elapsed,
+                   let oldElapsed = previous.elapsed, elapsed > oldElapsed,
+                   current.duration != nil, !current.artist.isEmpty,
+                   !current.album.isEmpty || current.artwork != nil {
+                    recentTitles.insert(title)
+                    confirmed = recentTitles.count >= 3
+                    if confirmed { recentTitles.removeAll() }
+                } else {
+                    recentTitles = Set([current.title].compactMap { $0 })
+                }
+            }
+            titleChangedAt = current
+        }
+        if confirmed { return .receiving(current.title) }
+        guard current.title != nil, let titleChangedAt else { return .checking }
+        let stableFor: TimeInterval
+        if let elapsed = current.elapsed, let initialElapsed = titleChangedAt.elapsed {
+            stableFor = elapsed - initialElapsed
+        } else {
+            stableFor = uptime - titleChangedAt.uptime
+        }
+        return stableFor >= 10 ? .notDetected : .checking
+    }
 }
 
 enum NowPlayingBridge {

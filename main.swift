@@ -676,7 +676,7 @@ private struct GlassPill: View {
             Button { systemApps.setExpanded("music", true) } label: {
                 Text(systemApps.currentLyricText)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(systemApps.currentLyricIndex == nil ? .secondary : .primary)
+                    .foregroundStyle(systemApps.currentLyricIndex != nil || systemApps.hasLiveLyric ? .primary : .secondary)
                     .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
             }.buttonStyle(.plain)
@@ -962,8 +962,10 @@ private struct GlassPill: View {
                     }
                     iconButton("forward.end.fill") { systemApps.musicCommand("next") }
                     Spacer(minLength: 0)
-                    Button("打开播放器") { systemApps.launchMusic() }
-                        .buttonStyle(.plain).font(.system(size: 9)).foregroundStyle(.secondary)
+                    if systemApps.airPlayLyrics == nil {
+                        Button("打开播放器") { systemApps.launchMusic() }
+                            .buttonStyle(.plain).font(.system(size: 9)).foregroundStyle(.secondary)
+                    }
                 }
                 GeometryReader { geometry in
                     Capsule().fill(.primary.opacity(0.13))
@@ -979,6 +981,10 @@ private struct GlassPill: View {
                         .lineLimit(2).frame(height: 36, alignment: .leading)
                     Text(index + 1 < systemApps.timedLyrics.count ? systemApps.timedLyrics[index + 1].text : " ")
                         .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).frame(height: 13)
+                } else if systemApps.hasLiveLyric {
+                    Text(systemApps.currentLyricText)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .lineLimit(2).frame(height: 36, alignment: .leading)
                 } else {
                     Text(systemApps.currentLyricText)
                         .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
@@ -990,6 +996,19 @@ private struct GlassPill: View {
     }
 
     @ViewBuilder private var lyricActions: some View {
+        if let label = systemApps.airPlayLyricLabel, systemApps.lyricsTrackKey == nil {
+            airPlayLyricsLabel(label)
+        } else {
+            lyricSourceActions
+        }
+    }
+
+    private func airPlayLyricsLabel(_ label: String) -> some View {
+        Label(label, systemImage: "airplay.audio")
+            .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
+    }
+
+    private var lyricSourceActions: some View {
         HStack(spacing: 8) {
             Menu {
                 if !systemApps.extraLyricsEnabled {
@@ -1036,6 +1055,7 @@ private struct GlassPill: View {
                 Image(systemName: "magnifyingglass").font(.system(size: 11))
             }.buttonStyle(.plain).help("搜索与校正歌词")
             Spacer(minLength: 0)
+            if let label = systemApps.airPlayLyricLabel { airPlayLyricsLabel(label) }
             if !systemApps.timedLyrics.isEmpty {
                 Menu {
                     Text("正值提前，负值延后；按歌曲保存")

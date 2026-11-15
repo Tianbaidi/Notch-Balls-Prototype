@@ -296,6 +296,36 @@ extension SystemAppsStore {
         acceptMusicSnapshot(snapshot(nil, available: false))
         assert(!musicAvailable && lyricsTrackKey == nil)
     }
+    func testAirPlayLyrics() {
+        onlineLyricsEnabled = true
+        extraLyricsEnabled = false; independentLyricsEnabled = false; neteaseLyricsEnabled = false
+        func receive(_ title: String?, at seconds: Double, elapsed: Double? = nil, artwork: String = "first") {
+            acceptMusicSnapshot(.init(available: true, bundle: "com.apple.controlcenter", title: title,
+                artist: "Example Artist", album: "Sample Album", artworkData: nil, duration: 240,
+                elapsed: elapsed ?? 30 + seconds, playing: true, artworkIdentifier: artwork), uptime: seconds)
+        }
+        receive("第一句", at: 0)
+        receive("第二句", at: 3)
+        assert(airPlayLyrics == .checking && lyricsTrackKey == nil && !lyricsSearching)
+        receive("第三句", at: 6)
+        let firstArtworkKey = artworkKey
+        assert(airPlayLyrics == .receiving("第三句") && currentLyricText == "第三句")
+        assert(musicTitle == "AirPlay 播放" && musicSource == "AirPlay" && lyricsTrackKey == nil)
+        receive(nil, at: 7)
+        assert(airPlayLyrics == .receiving(nil) && !hasLiveLyric)
+        receive("下一句", at: 8)
+        assert(hasLiveLyric && currentLyricText == "下一句" && artworkKey == firstArtworkKey && !lyricsSearching)
+        receive("Quiet Morning", at: 9, elapsed: 0, artwork: "second")
+        assert(airPlayLyrics == .checking && artworkKey != firstArtworkKey && !hasLiveLyric)
+        onlineLyricsEnabled = false
+        for seconds in [12.0, 15.0, 19.0] {
+            receive("Quiet Morning", at: seconds, elapsed: seconds - 9, artwork: "second")
+        }
+        assert(airPlayLyrics == .notDetected && musicTitle == "Quiet Morning" && lyricsTrackKey != nil)
+        acceptMusicSnapshot(.init(available: true, bundle: "com.apple.Music", title: "Local Song",
+            artist: "Example Artist", album: nil, artworkData: nil, duration: 180, elapsed: 10, playing: true))
+        assert(airPlayLyrics == nil && musicTitle == "Local Song" && lyricsTrackKey != nil)
+    }
     func loadLyricSearchPreview() {
         lyricsTrackKey = "synthetic-preview"
         musicTitle = "Quiet Morning (Remastered)"
@@ -313,6 +343,8 @@ extension SystemAppsStore {
 }
 let stateTest = SystemAppsStore()
 stateTest.testMusicState()
+stateTest.testAirPlayLyrics()
+print("PASS: AirPlay line reception, stable artwork, blank lines, track change and normal lyrics fallback")
 print("PASS: selected lyrics hold, stale results ignored, manual search requires choice, snapshot jitter/gaps and real track changes")
 previewSystem.loadLyricSearchPreview()
 render(LyricSearchHost(store: previewSystem), name: "lyric-search-light", size: CGSize(width: 640, height: 660))
