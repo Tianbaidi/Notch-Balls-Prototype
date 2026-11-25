@@ -1920,13 +1920,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updatePlacement(refreshFullscreen: true)
     }
 
-    private func detectFullscreen(on screen: NSScreen) -> Bool {
-        if let fullscreenDetection { return fullscreenDetection(screen) }
-        guard let primary = NSScreen.screens.first,
+    private func observeFullscreen(on screen: NSScreen) -> (active: Bool, onScreen: Set<CGWindowID>?) {
+        if let fullscreenDetection { return (fullscreenDetection(screen), nil) }
+        let screens = NSScreen.screens
+        // AppKit reports the foreground app's presentation options system-wide.
+        // On multiple displays that flag alone cannot identify the anchor's Space.
+        let systemFullscreen = screens.count == 1 && NSApp.currentSystemPresentationOptions.contains(.fullScreen)
+        guard let primary = screens.first,
               let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
-            return fullscreenAtAnchor
+            return (systemFullscreen || fullscreenAtAnchor, nil)
         }
-        return windows.contains { item in
+        let active = systemFullscreen || windows.contains { item in
             // The frontmost app may be on a different display. Inspect the anchor's visible windows.
             guard let pid = (item[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
                   pid != ProcessInfo.processInfo.processIdentifier,
@@ -1937,16 +1941,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let rect = CGRect(x: quartz.minX, y: primary.frame.maxY - quartz.maxY, width: quartz.width, height: quartz.height)
             return DockGeometry.coversFullscreen(rect, screen: screen.frame, safeTop: screen.safeAreaInsets.top)
         }
+        let onScreen = Set(windows.compactMap { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value })
+        return (active, onScreen)
     }
 
     private func updatePlacement(refreshFullscreen: Bool) {
         guard !menuTracking.isActive else { return }
         guard let screen = anchorScreen, let overlay, let balls, let trigger else { return }
         guard !restoringFullscreenLayout else { return }
+        var onScreen: Set<CGWindowID>?
         if refreshFullscreen {
-            let nextFullscreen = detectFullscreen(on: screen)
-            if nextFullscreen != fullscreenAtAnchor { refreshGlassForSpaceChange() }
-            fullscreenAtAnchor = nextFullscreen
+            let observation = observeFullscreen(on: screen)
+            if observation.active != fullscreenAtAnchor { refreshGlassForSpaceChange() }
+            fullscreenAtAnchor = observation.active
+            onScreen = observation.onScreen
         }
         let wasFullscreenPin = fullscreenPin.active
         let restore = fullscreenPin.update(active: fullscreenAtAnchor && fullscreenPinEnabled && preferredPinnedIndex() != nil,
@@ -1988,7 +1996,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let shape = FullscreenPinGeometry.resolve(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
                 notchLeft: screen.auxiliaryTopLeftArea.flatMap { $0.isEmpty ? nil : $0.maxX },
                 notchRight: screen.auxiliaryTopRightArea.flatMap { $0.isEmpty ? nil : $0.minX })
-            fullscreenPinController.update(status: fullscreenStatus(at: index), geometry: shape, menuTracking: menuTracking.isActive)
+            fullscreenPinController.update(status: fullscreenStatus(at: index), geometry: shape,
+                menuTracking: menuTracking.isActive, onScreen: onScreen)
         } else { fullscreenPinController.hide() }
         setFullscreenOverlayShown(!compact)
         updatePointerRouting()
@@ -2192,7 +2201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.level = .statusBar
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .canJoinAllApplications, .stationary]
         panel.hidesOnDeactivate = false
         return panel
     }

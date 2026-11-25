@@ -130,10 +130,24 @@ final class FullscreenPinController {
     private(set) var rightPanel: NSPanel?
     private var previousStatus: FullscreenPinStatus?
     private var previousGeometry: FullscreenPinGeometry?
+    private var nextVisibilityCheck: TimeInterval = 0
     var windowNumbers: Set<CGWindowID> {
         Set([leftPanel, rightPanel].compactMap { $0.map { CGWindowID($0.windowNumber) } })
     }
-    func update(status: FullscreenPinStatus, geometry: FullscreenPinGeometry, menuTracking: Bool) {
+    func update(status: FullscreenPinStatus, geometry: FullscreenPinGeometry, menuTracking: Bool,
+                onScreen: Set<CGWindowID>? = nil) {
+        // A panel can remain ordered in AppKit on the Space where it was created.
+        // Recreate it on this Space if WindowServer still omits it after the transition.
+        let now = ProcessInfo.processInfo.systemUptime
+        if previousGeometry == geometry, let onScreen, now >= nextVisibilityCheck {
+            let expected = geometry.usesWings ? [leftPanel, rightPanel] : [rightPanel]
+            if expected.contains(where: { panel in
+                guard let panel else { return false }
+                return !onScreen.contains(CGWindowID(panel.windowNumber))
+            }) {
+                hide()
+            }
+        }
         if rightPanel == nil { rightPanel = makePanel() }
         if geometry.usesWings && leftPanel == nil { leftPanel = makePanel() }
         let changed = status != previousStatus || geometry != previousGeometry
@@ -155,13 +169,21 @@ final class FullscreenPinController {
             if !panel.isVisible { panel.orderFrontRegardless() }
         }
         previousStatus = status
+        if geometry != previousGeometry { nextVisibilityCheck = now + 1 }
         previousGeometry = geometry
     }
     func pauseInteraction(_ paused: Bool) {
         leftPanel?.ignoresMouseEvents = paused
         rightPanel?.ignoresMouseEvents = paused
     }
-    func hide() { leftPanel?.orderOut(nil); rightPanel?.orderOut(nil) }
+    func hide() {
+        leftPanel?.orderOut(nil)
+        rightPanel?.orderOut(nil)
+        leftPanel = nil
+        rightPanel = nil
+        previousGeometry = nil
+        previousStatus = nil
+    }
     private func makePanel() -> NSPanel {
         let panel = FullscreenPinPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false)
@@ -173,7 +195,7 @@ final class FullscreenPinController {
         // Status-bar (25) clears that backing while remaining below menus.
         panel.level = .statusBar
         panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .canJoinAllApplications, .stationary]
         return panel
     }
 }

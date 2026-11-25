@@ -915,6 +915,7 @@ RunLoop.main.run(until: Date().addingTimeInterval(0.15))
 assert(nativePins.leftPanel!.isVisible && nativePins.rightPanel!.isVisible)
 assert(!nativePins.leftPanel!.canBecomeKey && !nativePins.rightPanel!.canBecomeMain)
 for panel in [nativePins.leftPanel!, nativePins.rightPanel!] {
+    assert(panel.collectionBehavior.contains(.canJoinAllApplications))
     assert(panel.level.rawValue > Int(CGWindowLevelForKey(.mainMenuWindow)) &&
            panel.level.rawValue < Int(CGWindowLevelForKey(.popUpMenuWindow)),
         "Fullscreen wings must clear the notch backing and stay below popup menus")
@@ -941,6 +942,16 @@ nativePins.pauseInteraction(true)
 assert(nativePins.leftPanel!.ignoresMouseEvents && nativePins.rightPanel!.ignoresMouseEvents)
 assert(nativePins.leftPanel!.isVisible && nativePins.rightPanel!.isVisible)
 nativePins.pauseInteraction(false)
+let oldRight = nativePins.rightPanel!
+RunLoop.main.run(until: Date().addingTimeInterval(1.05))
+nativePins.update(status: focusPinStatus, geometry: pinGeometry, menuTracking: false,
+    onScreen: nativePins.windowNumbers)
+assert(nativePins.rightPanel === oldRight)
+nativePins.update(status: focusPinStatus, geometry: pinGeometry, menuTracking: false,
+    onScreen: [CGWindowID(nativePins.leftPanel!.windowNumber)])
+assert(nativePins.rightPanel !== oldRight && !oldRight.isVisible)
+clickSyntheticPin(nativePins.rightPanel!)
+assert(nativePinClicks == 3)
 let externalPinGeometry = FullscreenPinGeometry.resolve(screen: pinScreen, safeTop: 0, notchLeft: nil, notchRight: nil)
 nativePins.update(status: musicPinStatus, geometry: externalPinGeometry, menuTracking: false)
 assert(!nativePins.leftPanel!.isVisible && nativePins.rightPanel!.isVisible)
