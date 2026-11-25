@@ -2,6 +2,26 @@
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
   <channel>
     <item>
+      <title>Notch Balls Prototype 0.48 — 未公证测试版 / Unnotarized test</title>
+      <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.48</link>
+      <sparkle:version>50</sparkle:version>
+      <sparkle:shortVersionString>0.48</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <sparkle:minimumAutoupdateVersion>50</sparkle:minimumAutoupdateVersion>
+      <pubDate>Wed, 25 Nov 2026 08:47:31 +0000</pubDate>
+      <description sparkle:format="plain-text">未公证测试版（Unnotarized test build）。仅用于现有安装的更新验证，不是正式公开版；未通过 Developer ID 签名或 Apple 公证。
+
+## 全屏固定显示修复
+
+- 修复切换到 Obsidian 等全屏页面时，刘海两侧的固定状态可能消失的问题。应用会检查两翼是否出现在当前屏幕，并在需要时重新显示。
+- 单屏时增加系统全屏状态检测，保留多屏窗口判断。
+- 已在本机通过 Obsidian 与 Codex 多次切换验证，原生界面回归检查通过。
+
+适用于 Apple silicon Mac，系统版本为 macOS 14 或更新版本。在菜单栏「●」中选择「检查更新」即可安装。</description>
+      <enclosure url="https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/download/v0.48/Notch-Balls-Prototype-0.48-macOS-arm64.zip" length="9734542" type="application/octet-stream" sparkle:edSignature="l6lwF42ceMdiZTAeIioeg7LzDJUheYKvBDlWHUWwNq6qT96xUyh8+QKFL5jumic//s0Igt55GV9Ywg9MRb1XBg==" />
+    </item>
+    <item>
       <title>Notch Balls Prototype 0.47 — 未公证测试版 / Unnotarized test</title>
       <link>https://github.com/Tianbaidi/Notch-Balls-Prototype/releases/tag/v0.47</link>
       <sparkle:version>49</sparkle:version>
